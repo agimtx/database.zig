@@ -1,0 +1,19 @@
+.{
+    .fingerprint = 0xbbebd9474a0a8a6a,
+    .name = .database_zig,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "bindings",
+        "drivers",
+        "docs",
+        "README.md",
+        ".github",
+        ".gitignore",
+        "LICENSE",
+    },
+}
