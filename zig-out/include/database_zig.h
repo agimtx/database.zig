@@ -8,16 +8,7 @@ extern "C" {
 #endif
 
 enum dbz_driver_kind {
-    DBZ_DRIVER_MYSQL8 = 1,
-    DBZ_DRIVER_POSTGRESQL = 2,
-    DBZ_DRIVER_SQLSERVER = 3,
-    DBZ_DRIVER_SNOWFLAKE = 4,
-    DBZ_DRIVER_BIGQUERY = 5,
-    DBZ_DRIVER_DUCKDB = 6,
-    DBZ_DRIVER_CLICKHOUSE = 7,
-    DBZ_DRIVER_REDSHIFT = 8,
-    DBZ_DRIVER_DATABRICKS = 9,
-    DBZ_DRIVER_TRINO = 10
+    DBZ_DRIVER_ADBC = 1
 };
 
 enum dbz_status {

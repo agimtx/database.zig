@@ -26,16 +26,7 @@ fn castManager(raw_manager: ?*anyopaque) ?*root.ConnectionManager {
 
 fn driverFromInt(value: i32) ?root.DriverKind {
     return switch (value) {
-        1 => .mysql8,
-        2 => .postgresql,
-        3 => .sqlserver,
-        4 => .snowflake,
-        5 => .bigquery,
-        6 => .duckdb,
-        7 => .clickhouse,
-        8 => .redshift,
-        9 => .databricks,
-        10 => .trino,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10 => .adbc,
         else => null,
     };
 }

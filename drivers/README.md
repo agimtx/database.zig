@@ -1,26 +1,16 @@
 # Drivers
 
-This directory contains per-database driver implementations. Zig owns driver registration, connection lifecycle, the shared contract for SQL execution, cursors, result sets, and column metadata, and the public ABI. Each driver directory can use Rust or another native stack for protocol details, SDK compatibility, authentication flows, and database-specific behavior.
+The old per-database driver scaffolds have been removed. database.zig now routes all database access through Apache Arrow ADBC and keeps Zig responsible for connection lifecycle, error mapping, result-set ownership, and the public ABI.
 
-## Planned Driver Directories
+## Current Role
 
-- `mysql8/`
-- `postgresql/`
-- `sqlserver/`
-- `snowflake/`
-- `bigquery/`
-- `duckdb/`
-- `clickhouse/`
-- `redshift/`
-- `databricks/`
-- `trino/`
-- `template/`
+- Document the migration away from per-database native driver folders.
+- Track how Zig should load the Arrow ADBC driver manager and vendor ADBC shared libraries.
+- Keep database-specific protocol handling out of the Python and Node.js bindings.
 
 ## Integration Rules
 
-- Each driver must expose a small, stable ABI to Zig.
-- Each driver must build a platform-native shared library for every supported target OS.
-- Zig should depend on driver shared libraries through dynamic linking.
-- Driver internals must remain invisible to the language bindings.
-- Drivers should fit the same lifecycle contract: open, close, execute, result-set metadata, cursor iteration, and health check.
-- Prefer mature native ecosystems such as `sqlx`, `tokio-postgres`, `tiberius`, vendor SDKs, BigQuery REST or gRPC clients, the official DuckDB crate, or equivalent non-Rust libraries where appropriate.
+- Zig should expose one built-in public backend: `adbc`.
+- Zig should depend on Arrow ADBC shared libraries through dynamic linking.
+- Vendor-specific connection options should flow through ADBC configuration rather than separate Zig driver kinds.
+- Language bindings should remain thin wrappers over the public C ABI.

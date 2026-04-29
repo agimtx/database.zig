@@ -1,14 +1,5 @@
 pub const DriverKind = enum(u8) {
-    mysql8,
-    postgresql,
-    sqlserver,
-    snowflake,
-    bigquery,
-    duckdb,
-    clickhouse,
-    redshift,
-    databricks,
-    trino,
+    adbc,
     custom,
 };
 

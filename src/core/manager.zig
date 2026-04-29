@@ -311,11 +311,11 @@ test "builtins can open and close a stub connection" {
     var manager = try ConnectionManager.init(std.testing.allocator);
     defer manager.deinit();
 
-    try std.testing.expectEqual(@as(usize, 10), manager.supportedDrivers());
+    try std.testing.expectEqual(@as(usize, 1), manager.supportedDrivers());
 
     const handle = try manager.open(.{
-        .driver = .mysql8,
-        .dsn = "mysql://localhost:3306/analytics",
+        .driver = .adbc,
+        .dsn = "adbc://localhost/analytics",
     });
 
     try std.testing.expectEqual(@as(u64, 1), handle.id);
@@ -330,8 +330,8 @@ test "manager exposes unified execute cursor and metadata contracts" {
     defer manager.deinit();
 
     const connection = try manager.open(.{
-        .driver = .postgresql,
-        .dsn = "postgresql://localhost:5432/analytics",
+        .driver = .adbc,
+        .dsn = "adbc://localhost/analytics",
     });
 
     const result_set = try manager.execute(connection.id, "select id, value from metrics");

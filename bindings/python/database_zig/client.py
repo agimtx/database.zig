@@ -9,16 +9,7 @@ from pathlib import Path
 
 
 _DRIVER_MAP = {
-    "mysql8": 1,
-    "postgresql": 2,
-    "sqlserver": 3,
-    "snowflake": 4,
-    "bigquery": 5,
-    "duckdb": 6,
-    "clickhouse": 7,
-    "redshift": 8,
-    "databricks": 9,
-    "trino": 10,
+    "adbc": 1,
 }
 
 _STATUS_MESSAGES = {
@@ -33,16 +24,7 @@ _STATUS_MESSAGES = {
 
 
 class DriverKind(IntEnum):
-    MYSQL8 = 1
-    POSTGRESQL = 2
-    SQLSERVER = 3
-    SNOWFLAKE = 4
-    BIGQUERY = 5
-    DUCKDB = 6
-    CLICKHOUSE = 7
-    REDSHIFT = 8
-    DATABRICKS = 9
-    TRINO = 10
+    ADBC = 1
 
 
 class ColumnType(IntEnum):

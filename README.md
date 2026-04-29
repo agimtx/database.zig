@@ -1,12 +1,12 @@
 # database.zig
 
-database.zig is a database connection management library scaffold that uses Zig as the control plane and exposes a stable C ABI to C, Python, and Node.js. Database-specific drivers live under `drivers/<database>/`, can be implemented in Rust or other native stacks, and are consumed by Zig through a shared-library contract for MySQL 8, PostgreSQL, SQL Server, Snowflake, BigQuery, DuckDB, ClickHouse, Redshift, Databricks, Trino, and other analytical databases.
+database.zig is a database connection management library scaffold that uses Zig as the control plane, Apache Arrow ADBC as the database access layer, and a stable C ABI for C, Python, and Node.js consumers. Zig owns lifecycle, registration, and error mapping while the target database is selected through the ADBC driver manager and connection configuration.
 
 ## Goals
 
 - Use Zig to manage connection lifecycle, driver registration, error mapping, and the public ABI.
-- Use per-database native driver implementations for protocol-heavy behavior while keeping the control plane centralized in Zig.
-- Keep the Zig-to-driver integration based on shared native libraries so each driver can ship independently per operating system.
+- Use Apache Arrow ADBC for protocol-heavy database access while keeping the control plane centralized in Zig.
+- Keep the Zig-to-ADBC integration based on shared native libraries so the ADBC driver manager and vendor drivers can ship independently per operating system.
 - Keep the external C ABI stable so Python and Node.js can remain thin wrappers.
 
 ## Repository Layout
@@ -24,18 +24,6 @@ database.zig is a database connection management library scaffold that uses Zig 
 │       └── database_zig/
 ├── docs/
 │   └── architecture.md
-├── drivers/
-│   ├── bigquery/
-│   ├── clickhouse/
-│   ├── databricks/
-│   ├── duckdb/
-│   ├── mysql8/
-│   ├── postgresql/
-│   ├── redshift/
-│   ├── snowflake/
-│   ├── sqlserver/
-│   ├── template/
-│   └── trino/
 └── src/
     ├── core/
     └── ffi/
@@ -43,11 +31,11 @@ database.zig is a database connection management library scaffold that uses Zig 
 
 ## Current Status
 
-- Zig already provides a connection manager, driver registry, and exported C ABI entry points.
+- Zig already provides a connection manager, an ADBC-backed registry surface, and exported C ABI entry points.
 - Zig now defines a unified external model for connections, SQL execution, cursors, result sets, and column metadata.
 - Python includes a thin ctypes-based binding scaffold.
 - Node.js includes a thin ffi-napi-based binding scaffold for the public C ABI.
-- Drivers follow a shared-library contract and the template currently demonstrates a Rust implementation.
+- The current backend surface is a single built-in ADBC driver path selected through the public ABI.
 
 ## Common Commands
 
@@ -59,7 +47,7 @@ zig build test
 
 ## Recommended Next Steps
 
-1. Freeze the Zig-to-driver shared-library ABI for connection, execute, cursor, and metadata operations before implementing real drivers.
-2. Split pooling, credential refresh, transactions, and row-value decoding into separate abstractions.
-3. Add build automation that produces per-platform shared libraries for each driver implementation and wires them into Zig.
+1. Replace the stubbed ADBC registration with real Arrow ADBC C API calls.
+2. Add configuration for ADBC driver manager loading, vendor driver paths, and option translation.
+3. Split pooling, credential refresh, transactions, and row-value decoding into separate abstractions on top of ADBC.
 4. Add packaging and CI workflows for Python and Node.js.

@@ -31,16 +31,7 @@ pub const DriverRegistry = struct {
 
     pub fn registerBuiltins(self: *DriverRegistry) !void {
         inline for ([_]types.DriverKind{
-            .mysql8,
-            .postgresql,
-            .sqlserver,
-            .snowflake,
-            .bigquery,
-            .duckdb,
-            .clickhouse,
-            .redshift,
-            .databricks,
-            .trino,
+            .adbc,
         }) |kind| {
             try self.register(.{
                 .kind = kind,
@@ -60,16 +51,7 @@ pub const DriverRegistry = struct {
 
 fn builtinName(kind: types.DriverKind) []const u8 {
     return switch (kind) {
-        .mysql8 => "mysql8",
-        .postgresql => "postgresql",
-        .sqlserver => "sqlserver",
-        .snowflake => "snowflake",
-        .bigquery => "bigquery",
-        .duckdb => "duckdb",
-        .clickhouse => "clickhouse",
-        .redshift => "redshift",
-        .databricks => "databricks",
-        .trino => "trino",
+        .adbc => "adbc",
         .custom => "custom",
     };
 }

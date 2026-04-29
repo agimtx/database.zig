@@ -4,16 +4,7 @@ const ffi = require("ffi-napi");
 const ref = require("ref-napi");
 
 const DRIVER_KINDS = {
-  mysql8: 1,
-  postgresql: 2,
-  sqlserver: 3,
-  snowflake: 4,
-  bigquery: 5,
-  duckdb: 6,
-  clickhouse: 7,
-  redshift: 8,
-  databricks: 9,
-  trino: 10,
+  adbc: 1,
 };
 
 const STATUS_MESSAGES = {
