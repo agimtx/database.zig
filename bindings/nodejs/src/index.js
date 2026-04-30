@@ -33,7 +33,13 @@ const COLUMN_TYPES = {
 
 const POINTER_SIZE = ref.sizeof.pointer;
 const SIZE_T_SIZE = ref.types.size_t.size;
-const COLUMN_METADATA_SIZE = POINTER_SIZE + SIZE_T_SIZE + 4 + 1;
+function alignStructSize(size) {
+  const remainder = size % POINTER_SIZE;
+  return remainder === 0 ? size : size + (POINTER_SIZE - remainder);
+}
+
+const COLUMN_METADATA_SIZE = alignStructSize(POINTER_SIZE + SIZE_T_SIZE + 4 + 1);
+const RESULT_CELL_SIZE = alignStructSize(POINTER_SIZE + SIZE_T_SIZE + 1);
 const OPERATION_RESULT_SIZE = 16;
 
 function raiseOnStatus(status, operation) {
@@ -76,6 +82,19 @@ function readOperationResult(buffer) {
     status: buffer.readInt32LE(4),
     value: Number(buffer.readBigUInt64LE(8)),
   };
+}
+
+function readResultCell(buffer) {
+  const textLength = SIZE_T_SIZE === 8
+    ? Number(buffer.readBigUInt64LE(POINTER_SIZE))
+    : buffer.readUInt32LE(POINTER_SIZE);
+  const isNullOffset = POINTER_SIZE + SIZE_T_SIZE;
+  if (buffer.readUInt8(isNullOffset) === 1) {
+    return null;
+  }
+
+  const textBuffer = ref.readPointer(buffer, 0, textLength);
+  return textBuffer.toString("utf8");
 }
 
 function readColumnMetadata(buffer) {
@@ -123,13 +142,17 @@ class ConnectionManager {
       dbz_connection_open: ["uint64", ["pointer", "int32", "string"]],
       dbz_connection_open_async: ["uint64", ["pointer", "int32", "string"]],
       dbz_connection_close: ["int32", ["pointer", "uint64"]],
+      dbz_connection_test: ["int32", ["pointer", "uint64", "pointer"]],
       dbz_connection_execute: ["uint64", ["pointer", "uint64", "string"]],
       dbz_connection_execute_async: ["uint64", ["pointer", "uint64", "string"]],
+      dbz_connection_get_tables: ["uint64", ["pointer", "uint64", "string", "string"]],
+      dbz_connection_get_databases: ["uint64", ["pointer", "uint64"]],
       dbz_result_set_close: ["int32", ["pointer", "uint64"]],
       dbz_result_set_row_count: ["int32", ["pointer", "uint64", "pointer"]],
       dbz_result_set_affected_rows: ["int32", ["pointer", "uint64", "pointer"]],
       dbz_result_set_column_count: ["int32", ["pointer", "uint64", "pointer"]],
       dbz_result_set_column_metadata: ["int32", ["pointer", "uint64", "size_t", "pointer"]],
+      dbz_result_set_value: ["int32", ["pointer", "uint64", "size_t", "size_t", "pointer"]],
       dbz_cursor_open: ["uint64", ["pointer", "uint64", "string"]],
       dbz_cursor_open_async: ["uint64", ["pointer", "uint64", "string"]],
       dbz_cursor_next: ["int32", ["pointer", "uint64", "pointer"]],
@@ -224,6 +247,55 @@ class ConnectionManager {
     return new ResultSet(this, resultSetId);
   }
 
+  _connectionTestSync(connectionId) {
+    const out = Buffer.alloc(1);
+    raiseOnStatus(this.lib.dbz_connection_test(this.manager, connectionId, out), "dbz_connection_test");
+    return out.readUInt8(0) === 1;
+  }
+
+  async _connectionTest(connectionId) {
+    const out = Buffer.alloc(1);
+    const status = await callAsync(this.lib.dbz_connection_test, [this.manager, connectionId, out]);
+    raiseOnStatus(status, "dbz_connection_test");
+    return out.readUInt8(0) === 1;
+  }
+
+  _getDatabasesSync(connectionId) {
+    const resultSetId = this.lib.dbz_connection_get_databases(this.manager, connectionId);
+    if (resultSetId === 0 || resultSetId === 0n) {
+      throw new Error("dbz_connection_get_databases returned 0");
+    }
+
+    return new ResultSet(this, Number(resultSetId));
+  }
+
+  async _getDatabases(connectionId) {
+    const resultSetId = await callAsync(this.lib.dbz_connection_get_databases, [this.manager, connectionId]);
+    if (resultSetId === 0 || resultSetId === 0n) {
+      throw new Error("dbz_connection_get_databases returned 0");
+    }
+
+    return new ResultSet(this, Number(resultSetId));
+  }
+
+  _getTablesSync(connectionId, catalog, database) {
+    const resultSetId = this.lib.dbz_connection_get_tables(this.manager, connectionId, catalog ?? null, database ?? null);
+    if (resultSetId === 0 || resultSetId === 0n) {
+      throw new Error("dbz_connection_get_tables returned 0");
+    }
+
+    return new ResultSet(this, Number(resultSetId));
+  }
+
+  async _getTables(connectionId, catalog, database) {
+    const resultSetId = await callAsync(this.lib.dbz_connection_get_tables, [this.manager, connectionId, catalog ?? null, database ?? null]);
+    if (resultSetId === 0 || resultSetId === 0n) {
+      throw new Error("dbz_connection_get_tables returned 0");
+    }
+
+    return new ResultSet(this, Number(resultSetId));
+  }
+
   _resultSetClose(resultSetId) {
     raiseOnStatus(this.lib.dbz_result_set_close(this.manager, resultSetId), "dbz_result_set_close");
   }
@@ -261,6 +333,15 @@ class ConnectionManager {
     }
 
     return columns;
+  }
+
+  _resultSetValue(resultSetId, rowIndex, columnIndex) {
+    const cellBuffer = Buffer.alloc(RESULT_CELL_SIZE);
+    raiseOnStatus(
+      this.lib.dbz_result_set_value(this.manager, resultSetId, rowIndex, columnIndex, cellBuffer),
+      "dbz_result_set_value",
+    );
+    return readResultCell(cellBuffer);
   }
 
   _openCursorSync(connectionId, sql) {
@@ -346,6 +427,30 @@ class Connection {
     return this.manager._execute(this.id, sql);
   }
 
+  testSync() {
+    return this.manager._connectionTestSync(this.id);
+  }
+
+  async test() {
+    return this.manager._connectionTest(this.id);
+  }
+
+  getDatabasesSync() {
+    return this.manager._getDatabasesSync(this.id);
+  }
+
+  async getDatabases() {
+    return this.manager._getDatabases(this.id);
+  }
+
+  getTablesSync(catalog = null, database = null) {
+    return this.manager._getTablesSync(this.id, catalog, database);
+  }
+
+  async getTables(catalog = null, database = null) {
+    return this.manager._getTables(this.id, catalog, database);
+  }
+
   cursorSync(sql) {
     return this.manager._openCursorSync(this.id, sql);
   }
@@ -379,6 +484,10 @@ class ResultSet {
 
   get columns() {
     return this.manager._resultSetColumns(this.id);
+  }
+
+  value(rowIndex, columnIndex) {
+    return this.manager._resultSetValue(this.id, rowIndex, columnIndex);
   }
 
   closeSync() {

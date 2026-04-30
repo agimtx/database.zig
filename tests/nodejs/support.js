@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
@@ -91,12 +92,16 @@ function loadTarget(sectionName) {
 
   return {
     driver: "adbc",
-    dsn: buildDsn(resolvedSectionName, section),
+    section: resolvedSectionName,
+    config: section,
+    dsn(databaseOverride = undefined) {
+      return buildDsn(resolvedSectionName, section, databaseOverride);
+    },
   };
 }
 
-function buildDsn(sectionName, config) {
-  if (config.dsn) {
+function buildDsn(sectionName, config, databaseOverride = undefined) {
+  if (config.dsn && databaseOverride === undefined) {
     return config.dsn;
   }
 
@@ -105,7 +110,7 @@ function buildDsn(sectionName, config) {
   const port = config.port ? `:${config.port}` : "";
   const username = config.user || "";
   const password = Object.prototype.hasOwnProperty.call(config, "password") ? config.password : null;
-  const database = config.database || defaultDatabase(sectionName);
+  const database = databaseOverride !== undefined ? databaseOverride : (config.database || defaultDatabase(sectionName));
 
   let credentials = "";
   if (username) {
@@ -142,6 +147,137 @@ function defaultDatabase(sectionName) {
   return "";
 }
 
+function uniqueIdentifier(prefix) {
+  return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
+}
+
+async function executeNonQuery(connection, sql) {
+  const resultSet = await connection.execute(sql);
+  await resultSet.close();
+}
+
+function readResultSetValues(resultSet, columnIndex) {
+  const values = [];
+  for (let rowIndex = 0; rowIndex < resultSet.rowCount; rowIndex += 1) {
+    values.push(resultSet.value(rowIndex, columnIndex));
+  }
+  return values;
+}
+
+async function runPostgresLifecycleTest(target) {
+  const databaseName = uniqueIdentifier("dbz_pg");
+  const tableName = uniqueIdentifier("records");
+  const manager = new bindingModule.ConnectionManager();
+
+  try {
+    const adminConnection = await manager.connect(target.driver, target.dsn());
+    try {
+      await executeNonQuery(adminConnection, `create database ${databaseName}`);
+
+      const databaseConnection = await manager.connect(target.driver, target.dsn(databaseName));
+      try {
+        await executeNonQuery(databaseConnection, `create table ${tableName} (id bigint primary key, value text not null)`);
+        await executeNonQuery(databaseConnection, `insert into ${tableName} (id, value) values (1, 'alpha'), (2, 'beta')`);
+
+        assert.equal(await databaseConnection.test(), true);
+
+        const resultSet = await databaseConnection.execute(`select id, value from ${tableName} order by id`);
+        try {
+          assert.equal(resultSet.rowCount, 2);
+          assert.equal(resultSet.value(0, 1), "alpha");
+          assert.equal(resultSet.value(1, 1), "beta");
+        } finally {
+          await resultSet.close();
+        }
+
+        const databasesResult = await databaseConnection.getDatabases();
+        try {
+          assert.ok(readResultSetValues(databasesResult, 0).includes(databaseName));
+        } finally {
+          await databasesResult.close();
+        }
+
+        const tablesResult = await databaseConnection.getTables(null, "public");
+        try {
+          assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));
+        } finally {
+          await tablesResult.close();
+        }
+      } finally {
+        await databaseConnection.close();
+      }
+    } finally {
+      try {
+        await executeNonQuery(adminConnection, `drop database if exists ${databaseName}`);
+      } finally {
+        await adminConnection.close();
+      }
+    }
+  } finally {
+    await manager.dispose();
+  }
+}
+
+async function runStarRocksLifecycleTest(target) {
+  const databaseName = uniqueIdentifier("dbz_sr");
+  const tableName = uniqueIdentifier("records");
+  const manager = new bindingModule.ConnectionManager();
+
+  try {
+    const adminConnection = await manager.connect(target.driver, target.dsn());
+    try {
+      await executeNonQuery(adminConnection, `create database if not exists ${databaseName}`);
+
+      const databaseConnection = await manager.connect(target.driver, target.dsn(databaseName));
+      try {
+        await executeNonQuery(
+          databaseConnection,
+          `create table ${tableName} (` +
+            "id bigint not null, " +
+            "value string not null" +
+          `) duplicate key(id) distributed by hash(id) buckets 1 properties (\"replication_num\" = \"1\")`,
+        );
+        await executeNonQuery(databaseConnection, `insert into ${tableName} (id, value) values (1, 'alpha'), (2, 'beta')`);
+
+        assert.equal(await databaseConnection.test(), true);
+
+        const resultSet = await databaseConnection.execute(`select id, value from ${tableName} order by id`);
+        try {
+          assert.equal(resultSet.rowCount, 2);
+          assert.equal(resultSet.value(0, 1), "alpha");
+          assert.equal(resultSet.value(1, 1), "beta");
+        } finally {
+          await resultSet.close();
+        }
+
+        const databasesResult = await databaseConnection.getDatabases();
+        try {
+          assert.ok(readResultSetValues(databasesResult, 0).includes(databaseName));
+        } finally {
+          await databasesResult.close();
+        }
+
+        const tablesResult = await databaseConnection.getTables(null, databaseName);
+        try {
+          assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));
+        } finally {
+          await tablesResult.close();
+        }
+      } finally {
+        await databaseConnection.close();
+      }
+    } finally {
+      try {
+        await executeNonQuery(adminConnection, `drop database if exists ${databaseName}`);
+      } finally {
+        await adminConnection.close();
+      }
+    }
+  } finally {
+    await manager.dispose();
+  }
+}
+
 function registerDatabaseBindingTest(sectionName) {
   const target = loadTarget(sectionName);
   const skipReason = bindingLoadError
@@ -151,42 +287,17 @@ function registerDatabaseBindingTest(sectionName) {
       : target.skip;
 
   test(`test_${sectionName}`, { skip: skipReason }, async () => {
-    const manager = new bindingModule.ConnectionManager();
-    try {
-      const connection = await manager.connect(target.driver, target.dsn);
-      try {
-        const resultSet = await connection.execute(testSql);
-        try {
-          assert.equal(resultSet.rowCount, 2);
-          assert.equal(resultSet.affectedRows, 2);
-
-          const columns = resultSet.columns;
-          assert.equal(columns.length, 2);
-          assert.equal(columns[0].name, "id");
-          assert.equal(columns[1].name, "value");
-        } finally {
-          await resultSet.close();
-        }
-
-        const cursor = await connection.cursor(testSql);
-        try {
-          const columns = cursor.columns;
-          assert.equal(columns.length, 2);
-
-          let seenRows = 0;
-          while (cursor.next()) {
-            seenRows += 1;
-          }
-          assert.equal(seenRows, 2);
-        } finally {
-          await cursor.close();
-        }
-      } finally {
-        await connection.close();
-      }
-    } finally {
-      await manager.dispose();
+    if (sectionName === "postgres") {
+      await runPostgresLifecycleTest(target);
+      return;
     }
+
+    if (sectionName === "starrocks") {
+      await runStarRocksLifecycleTest(target);
+      return;
+    }
+
+    throw new Error(`unsupported database lifecycle test: ${sectionName}`);
   });
 }
 

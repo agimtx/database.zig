@@ -60,6 +60,14 @@ class _COperationResult(ctypes.Structure):
     ]
 
 
+class _CResultCell(ctypes.Structure):
+    _fields_ = [
+        ("text_ptr", ctypes.c_void_p),
+        ("text_len", ctypes.c_size_t),
+        ("is_null", ctypes.c_uint8),
+    ]
+
+
 @dataclass(frozen=True)
 class ColumnMetadata:
     name: str
@@ -83,6 +91,9 @@ class ResultSet:
     @property
     def columns(self) -> list[ColumnMetadata]:
         return self._manager._result_set_columns(self.id)
+
+    def value(self, row_index: int, column_index: int) -> str | None:
+        return self._manager._result_set_value(self.id, row_index, column_index)
 
     def close(self) -> None:
         self._manager._result_set_close(self.id)
@@ -128,6 +139,24 @@ class Connection:
 
     async def cursor_async(self, sql: str) -> Cursor:
         return await self._manager._open_cursor_async(self.id, sql)
+
+    def test(self) -> bool:
+        return self._manager._connection_test(self.id)
+
+    async def test_async(self) -> bool:
+        return await self._manager._connection_test_async(self.id)
+
+    def get_databases(self) -> ResultSet:
+        return self._manager._get_databases(self.id)
+
+    async def get_databases_async(self) -> ResultSet:
+        return await self._manager._get_databases_async(self.id)
+
+    def get_tables(self, catalog: str | None = None, database: str | None = None) -> ResultSet:
+        return self._manager._get_tables(self.id, catalog, database)
+
+    async def get_tables_async(self, catalog: str | None = None, database: str | None = None) -> ResultSet:
+        return await self._manager._get_tables_async(self.id, catalog, database)
 
     def close(self) -> None:
         self._manager.close_connection(self.id)
@@ -214,10 +243,16 @@ class ConnectionManager:
         self._lib.dbz_connection_open_async.restype = ctypes.c_uint64
         self._lib.dbz_connection_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
         self._lib.dbz_connection_close.restype = ctypes.c_int32
+        self._lib.dbz_connection_test.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8)]
+        self._lib.dbz_connection_test.restype = ctypes.c_int32
         self._lib.dbz_connection_execute.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
         self._lib.dbz_connection_execute.restype = ctypes.c_uint64
         self._lib.dbz_connection_execute_async.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
         self._lib.dbz_connection_execute_async.restype = ctypes.c_uint64
+        self._lib.dbz_connection_get_tables.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p]
+        self._lib.dbz_connection_get_tables.restype = ctypes.c_uint64
+        self._lib.dbz_connection_get_databases.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._lib.dbz_connection_get_databases.restype = ctypes.c_uint64
         self._lib.dbz_result_set_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
         self._lib.dbz_result_set_close.restype = ctypes.c_int32
         self._lib.dbz_result_set_row_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
@@ -228,6 +263,8 @@ class ConnectionManager:
         self._lib.dbz_result_set_column_count.restype = ctypes.c_int32
         self._lib.dbz_result_set_column_metadata.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(_CColumnMetadata)]
         self._lib.dbz_result_set_column_metadata.restype = ctypes.c_int32
+        self._lib.dbz_result_set_value.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(_CResultCell)]
+        self._lib.dbz_result_set_value.restype = ctypes.c_int32
         self._lib.dbz_cursor_open.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
         self._lib.dbz_cursor_open.restype = ctypes.c_uint64
         self._lib.dbz_cursor_open_async.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
@@ -263,6 +300,40 @@ class ConnectionManager:
         result_set_id = await self._await_operation_value(operation_id, "dbz_connection_execute_async")
         return ResultSet(self, result_set_id)
 
+    def _connection_test(self, connection_id: int) -> bool:
+        out_value = ctypes.c_uint8()
+        self._raise_on_status(
+            self._lib.dbz_connection_test(self._manager, connection_id, ctypes.byref(out_value)),
+            "dbz_connection_test",
+        )
+        return bool(out_value.value)
+
+    async def _connection_test_async(self, connection_id: int) -> bool:
+        return await asyncio.to_thread(self._connection_test, connection_id)
+
+    def _get_databases(self, connection_id: int) -> ResultSet:
+        result_set_id = self._lib.dbz_connection_get_databases(self._manager, connection_id)
+        if result_set_id == 0:
+            raise RuntimeError("dbz_connection_get_databases returned 0")
+        return ResultSet(self, int(result_set_id))
+
+    async def _get_databases_async(self, connection_id: int) -> ResultSet:
+        return await asyncio.to_thread(self._get_databases, connection_id)
+
+    def _get_tables(self, connection_id: int, catalog: str | None, database: str | None) -> ResultSet:
+        result_set_id = self._lib.dbz_connection_get_tables(
+            self._manager,
+            connection_id,
+            catalog.encode("utf-8") if catalog is not None else None,
+            database.encode("utf-8") if database is not None else None,
+        )
+        if result_set_id == 0:
+            raise RuntimeError("dbz_connection_get_tables returned 0")
+        return ResultSet(self, int(result_set_id))
+
+    async def _get_tables_async(self, connection_id: int, catalog: str | None, database: str | None) -> ResultSet:
+        return await asyncio.to_thread(self._get_tables, connection_id, catalog, database)
+
     def _result_set_close(self, result_set_id: int) -> None:
         self._raise_on_status(
             self._lib.dbz_result_set_close(self._manager, result_set_id),
@@ -297,6 +368,16 @@ class ConnectionManager:
             columns.append(self._read_column_metadata("dbz_result_set_column_metadata", result_set_id, index, self._lib.dbz_result_set_column_metadata))
 
         return columns
+
+    def _result_set_value(self, result_set_id: int, row_index: int, column_index: int) -> str | None:
+        raw_cell = _CResultCell()
+        self._raise_on_status(
+            self._lib.dbz_result_set_value(self._manager, result_set_id, row_index, column_index, ctypes.byref(raw_cell)),
+            "dbz_result_set_value",
+        )
+        if raw_cell.is_null:
+            return None
+        return ctypes.string_at(raw_cell.text_ptr, raw_cell.text_len).decode("utf-8")
 
     def _open_cursor(self, connection_id: int, sql: str) -> Cursor:
         cursor_id = self._lib.dbz_cursor_open(self._manager, connection_id, sql.encode("utf-8"))

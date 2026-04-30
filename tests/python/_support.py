@@ -5,6 +5,8 @@ import importlib
 import os
 import sys
 import unittest
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -19,7 +21,17 @@ if str(PYTHON_BINDING_ROOT) not in sys.path:
 ConnectionManager = importlib.import_module("database_zig").ConnectionManager
 
 
-def load_test_target(section: str) -> tuple[str, str]:
+@dataclass(frozen=True)
+class TestTarget:
+    driver: str
+    section: str
+    config: dict[str, str]
+
+    def dsn(self, database_override: str | None = None) -> str:
+        return build_dsn(self.section, self.config, database_override)
+
+
+def load_test_target(section: str) -> TestTarget:
     env_file = Path(os.getenv("DATABASE_ZIG_TEST_ENV_FILE", str(DEFAULT_ENV_FILE)))
     if not env_file.exists():
         raise unittest.SkipTest(f"test config not found: {env_file}")
@@ -32,7 +44,7 @@ def load_test_target(section: str) -> tuple[str, str]:
         raise unittest.SkipTest(f"test section not found: {section}")
 
     config = {key: value for key, value in parser.items(resolved_section)}
-    return "adbc", build_dsn(resolved_section, config)
+    return TestTarget(driver="adbc", section=resolved_section, config=config)
 
 
 def resolve_section_name(parser: configparser.ConfigParser, section: str) -> str | None:
@@ -51,9 +63,9 @@ def should_run_section(section: str) -> bool:
     return requested is None or requested.lower() == section.lower()
 
 
-def build_dsn(section: str, config: dict[str, str]) -> str:
+def build_dsn(section: str, config: dict[str, str], database_override: str | None = None) -> str:
     explicit_dsn = config.get("dsn")
-    if explicit_dsn:
+    if explicit_dsn and database_override is None:
         return explicit_dsn
 
     scheme = config.get("scheme") or default_scheme(section)
@@ -61,7 +73,7 @@ def build_dsn(section: str, config: dict[str, str]) -> str:
     port = config.get("port")
     username = config.get("user", "")
     password = config.get("password")
-    database = config.get("database") or default_database(section)
+    database = database_override if database_override is not None else (config.get("database") or default_database(section))
 
     credentials = ""
     if username:
@@ -109,10 +121,10 @@ async def assert_database_binding(section: str) -> None:
     if not should_run_section(section):
         raise unittest.SkipTest(f"DATABASE_ZIG_TEST_SECTION is filtering out {section}")
 
-    driver, dsn = load_test_target(section)
+    target = load_test_target(section)
 
     async with ConnectionManager() as manager:
-        connection = await manager.connect_async(driver, dsn)
+        connection = await manager.connect_async(target.driver, target.dsn())
         try:
             result_set = await connection.execute_async(TEST_SQL)
             try:
@@ -139,3 +151,17 @@ async def assert_database_binding(section: str) -> None:
                 await cursor.close_async()
         finally:
             await connection.close_async()
+
+
+def unique_identifier(prefix: str) -> str:
+    suffix = uuid.uuid4().hex[:8]
+    return f"{prefix}_{suffix}"
+
+
+async def execute_non_query(connection: object, sql: str) -> None:
+    result_set = await connection.execute_async(sql)
+    await result_set.close_async()
+
+
+def read_result_set_values(result_set: object, column_index: int) -> list[str | None]:
+    return [result_set.value(row_index, column_index) for row_index in range(result_set.row_count)]
