@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import datetime as dt
+import json
 import os
 import platform
+import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import IntEnum
 from pathlib import Path
+from typing import Any
 
 
 _DRIVER_MAP = {
@@ -90,10 +95,59 @@ class ColumnMetadata:
     nullable: bool
 
 
+ResultValue = bool | int | float | str | bytes | Decimal | dt.date | dt.time | dt.datetime | uuid.UUID | list[Any] | dict[str, Any]
+
+
+def _decode_result_value(raw_value: str | None, column_type: ColumnType) -> ResultValue | None:
+    if raw_value is None:
+        return None
+
+    try:
+        if column_type == ColumnType.BOOLEAN:
+            normalized = raw_value.lower()
+            if normalized == "true" or raw_value == "1":
+                return True
+            if normalized == "false" or raw_value == "0":
+                return False
+            return raw_value
+
+        if column_type == ColumnType.INT64:
+            return int(raw_value)
+
+        if column_type == ColumnType.FLOAT64:
+            return float(raw_value)
+
+        if column_type == ColumnType.BINARY:
+            return bytes.fromhex(raw_value)
+
+        if column_type == ColumnType.DECIMAL:
+            return Decimal(raw_value)
+
+        if column_type == ColumnType.TIMESTAMP:
+            return dt.datetime.fromisoformat(raw_value)
+
+        if column_type == ColumnType.JSON or column_type == ColumnType.ARRAY or column_type == ColumnType.MAP or column_type == ColumnType.STRUCT:
+            return json.loads(raw_value)
+
+        if column_type == ColumnType.DATE:
+            return dt.date.fromisoformat(raw_value)
+
+        if column_type == ColumnType.TIME:
+            return dt.time.fromisoformat(raw_value)
+
+        if column_type == ColumnType.UUID:
+            return uuid.UUID(raw_value)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return raw_value
+
+    return raw_value
+
+
 class ResultSet:
     def __init__(self, manager: ConnectionManager, result_set_id: int) -> None:
         self._manager = manager
         self.id = result_set_id
+        self._columns: list[ColumnMetadata] | None = None
 
     @property
     def row_count(self) -> int:
@@ -105,10 +159,13 @@ class ResultSet:
 
     @property
     def columns(self) -> list[ColumnMetadata]:
-        return self._manager._result_set_columns(self.id)
+        if self._columns is None:
+            self._columns = self._manager._result_set_columns(self.id)
+        return self._columns
 
-    def value(self, row_index: int, column_index: int) -> str | None:
-        return self._manager._result_set_value(self.id, row_index, column_index)
+    def value(self, row_index: int, column_index: int) -> ResultValue | None:
+        raw_value = self._manager._result_set_value(self.id, row_index, column_index)
+        return _decode_result_value(raw_value, self.columns[column_index].column_type)
 
     def close(self) -> None:
         self._manager._result_set_close(self.id)
@@ -487,7 +544,7 @@ class ConnectionManager:
         if library_path:
             return Path(library_path)
 
-        env_path = os.getenv("DATABASE_ZIG_LIBRARY")
+        env_path = os.getenv("AQ_DATABASE_LIBRARY") or os.getenv("DATABASE_ZIG_LIBRARY")
         if env_path:
             return Path(env_path)
 

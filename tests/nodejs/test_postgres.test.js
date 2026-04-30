@@ -70,22 +70,27 @@ function buildPostgresTypeCoverageCase(tableName) {
 }
 
 function assertPostgresTypeCoverageValues(resultSet) {
-	assert.equal(resultSet.value(0, 0), "1");
+	const columns = resultSet.columns;
+	assert.equal(resultSet.value(0, 0), 1n);
 	assertBooleanValue(resultSet.value(0, 1));
-	assert.equal(resultSet.value(0, 2), "42");
-	assert.match(resultSet.value(0, 3), /^3\.5(?:0+)?$/);
+	assert.equal(resultSet.value(0, 2), 42n);
+	assert.equal(resultSet.value(0, 3), 3.5);
 	assert.equal(resultSet.value(0, 4), "alpha");
-	assert.equal(resultSet.value(0, 5), "0102ff");
-	assertNonEmptyValue(resultSet.value(0, 6), "decimal_value");
+	assert.deepEqual(resultSet.value(0, 5), Buffer.from([0x01, 0x02, 0xff]));
+	assert.equal(resultSet.value(0, 6), "123.45");
 	assert.equal(resultSet.value(0, 7), "2024-01-02");
 	assert.match(resultSet.value(0, 8), /^03:04:05(?:\.\d+)?$/);
 	assert.match(resultSet.value(0, 9), /^P0M1DT00:00:02(?:\.0+)?$/);
 	assert.equal(resultSet.value(0, 10), "550e8400-e29b-41d4-a716-446655440000");
 	assert.equal(resultSet.value(0, 11), "<a>1</a>");
-	assert.equal(resultSet.value(0, 12), "[1,2,3]");
+	assert.deepEqual(resultSet.value(0, 12), [1, 2, 3]);
 	assert.equal(resultSet.value(0, 13), "127.0.0.1");
 	assert.match(resultSet.value(0, 14), /^2024-01-02T03:04:05(?:\.\d+)?$/);
-	assert.match(resultSet.value(0, 15), /"enabled"/);
+	if (columns[15].columnType === bindingModule.COLUMN_TYPES.JSON) {
+		assert.deepEqual(resultSet.value(0, 15), { enabled: true, count: 1 });
+	} else {
+		assert.match(resultSet.value(0, 15), /"enabled"/);
+	}
 }
 
 const POSTGRES_ADDITIONAL_TYPES_SQL =
@@ -114,7 +119,7 @@ async function assertPostgresAdditionalTypeCoverage(connection) {
 			assert.equal(enumResult.columns.length, 1);
 			assert.equal(enumResult.columns[0].name, "enum_value");
 			assert.equal(enumResult.columns[0].columnType, bindingModule.COLUMN_TYPES.BINARY);
-			assert.equal(enumResult.value(0, 0), "6e6577");
+			assert.deepEqual(enumResult.value(0, 0), Buffer.from("new"));
 		} finally {
 			await enumResult.close();
 		}
@@ -140,7 +145,7 @@ async function assertPostgresAdditionalTypeCoverage(connection) {
 			{ name: "timetz_value", type: bindingModule.COLUMN_TYPES.TIME },
 			{ name: "timestamptz_value", type: bindingModule.COLUMN_TYPES.TIMESTAMP },
 		]);
-		assert.equal(resultSet.value(0, 0), "1234");
+		assert.equal(resultSet.value(0, 0), 1234n);
 		assert.equal(resultSet.value(0, 3), "10.0.0.0/24");
 		assert.equal(resultSet.value(0, 4), "08:00:2b:01:02:03");
 		assert.equal(resultSet.value(0, 5), "08:00:2b:01:02:03:04:05");

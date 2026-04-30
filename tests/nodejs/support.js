@@ -169,14 +169,19 @@ function assertNonEmptyValue(value, label) {
 }
 
 function assertHexValue(value, label) {
-  assert.equal(typeof value, "string", `${label} should be returned as text`);
+  if (Buffer.isBuffer(value)) {
+    assert.ok(value.length > 0, `${label} should not be empty`);
+    return;
+  }
+
+  assert.equal(typeof value, "string", `${label} should be returned as bytes or hexadecimal text`);
   assert.ok(value.length > 0, `${label} should not be empty`);
   assert.equal(value.length % 2, 0, `${label} should contain an even number of hex characters`);
   assert.match(value, /^[0-9a-f]+$/i, `${label} should be hexadecimal`);
 }
 
 function assertBooleanValue(value) {
-  assert.ok(value === "true" || value === "false" || value === "1" || value === "0", `unexpected boolean text: ${value}`);
+  assert.equal(typeof value, "boolean", `unexpected boolean value: ${value}`);
 }
 
 function assertColumnMetadata(columns, expectedColumns) {

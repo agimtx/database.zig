@@ -21,7 +21,7 @@ database.zig is a database connection management library scaffold that uses Zig 
 │   ├── nodejs/
 │   │   └── src/
 │   └── python/
-│       └── database_zig/
+│       └── aq_database/
 ├── docs/
 │   └── architecture.md
 └── src/

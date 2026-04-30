@@ -105,6 +105,42 @@ function readResultCell(buffer) {
   return textBuffer.toString("utf8");
 }
 
+function convertResultValue(rawValue, columnType) {
+  if (rawValue === null) {
+    return null;
+  }
+
+  try {
+    switch (columnType) {
+      case COLUMN_TYPES.BOOLEAN: {
+        const normalized = rawValue.toLowerCase();
+        if (normalized === "true" || rawValue === "1") {
+          return true;
+        }
+        if (normalized === "false" || rawValue === "0") {
+          return false;
+        }
+        return rawValue;
+      }
+      case COLUMN_TYPES.INT64:
+        return BigInt(rawValue);
+      case COLUMN_TYPES.FLOAT64:
+        return Number(rawValue);
+      case COLUMN_TYPES.BINARY:
+        return Buffer.from(rawValue, "hex");
+      case COLUMN_TYPES.JSON:
+      case COLUMN_TYPES.ARRAY:
+      case COLUMN_TYPES.MAP:
+      case COLUMN_TYPES.STRUCT:
+        return JSON.parse(rawValue);
+      default:
+        return rawValue;
+    }
+  } catch {
+    return rawValue;
+  }
+}
+
 function readErrorMessage(buffer) {
   const messageLength = SIZE_T_SIZE === 8
     ? Number(buffer.readBigUInt64LE(POINTER_SIZE))
@@ -134,6 +170,10 @@ function readColumnMetadata(buffer) {
 function resolveLibraryPath(explicitPath) {
   if (explicitPath) {
     return explicitPath;
+  }
+
+  if (process.env.AQ_DATABASE_LIBRARY) {
+    return process.env.AQ_DATABASE_LIBRARY;
   }
 
   if (process.env.DATABASE_ZIG_LIBRARY) {
@@ -525,6 +565,7 @@ class ResultSet {
   constructor(manager, id) {
     this.manager = manager;
     this.id = id;
+    this._columns = null;
   }
 
   get rowCount() {
@@ -536,11 +577,15 @@ class ResultSet {
   }
 
   get columns() {
-    return this.manager._resultSetColumns(this.id);
+    if (this._columns === null) {
+      this._columns = this.manager._resultSetColumns(this.id);
+    }
+    return this._columns;
   }
 
   value(rowIndex, columnIndex) {
-    return this.manager._resultSetValue(this.id, rowIndex, columnIndex);
+    const rawValue = this.manager._resultSetValue(this.id, rowIndex, columnIndex);
+    return convertResultValue(rawValue, this.columns[columnIndex].columnType);
   }
 
   closeSync() {

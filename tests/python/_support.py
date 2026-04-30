@@ -19,7 +19,7 @@ TEST_SQL = "select 1 as id, 'alpha' as value union all select 2 as id, 'beta' as
 if str(PYTHON_BINDING_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_BINDING_ROOT))
 
-_binding_module = importlib.import_module("database_zig")
+_binding_module = importlib.import_module("aq_database")
 ConnectionManager = _binding_module.ConnectionManager
 ColumnType = _binding_module.ColumnType
 
@@ -166,24 +166,27 @@ async def execute_non_query(connection: object, sql: str) -> None:
     await result_set.close_async()
 
 
-def read_result_set_values(result_set: object, column_index: int) -> list[str | None]:
+def read_result_set_values(result_set: object, column_index: int) -> list[object | None]:
     return [result_set.value(row_index, column_index) for row_index in range(result_set.row_count)]
 
 
-def assert_non_empty_value(value: str | None, label: str) -> None:
-    assert isinstance(value, str), f"{label} should be returned as text"
-    assert value, f"{label} should not be empty"
+def assert_non_empty_value(value: object | None, label: str) -> None:
+    assert value not in (None, b"", ""), f"{label} should not be empty"
 
 
-def assert_hex_value(value: str | None, label: str) -> None:
-    assert isinstance(value, str), f"{label} should be returned as text"
+def assert_hex_value(value: object | None, label: str) -> None:
+    if isinstance(value, bytes):
+        assert value, f"{label} should not be empty"
+        return
+
+    assert isinstance(value, str), f"{label} should be returned as bytes or hexadecimal text"
     assert value, f"{label} should not be empty"
     assert len(value) % 2 == 0, f"{label} should have an even number of hex characters"
     assert all(character in "0123456789abcdef" for character in value.lower()), f"{label} should be lowercase hexadecimal"
 
 
-def assert_boolean_value(value: str | None) -> None:
-    assert value in {"true", "false", "1", "0"}, f"unexpected boolean text: {value}"
+def assert_boolean_value(value: object | None) -> None:
+    assert isinstance(value, bool), f"unexpected boolean value: {value!r}"
 
 
 def assert_column_metadata(columns: list[object], expected_columns: list[dict[str, object]]) -> None:

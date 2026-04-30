@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime as dt
 import unittest
+from decimal import Decimal
 
 from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_non_empty_value, assert_type_coverage, execute_non_query, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
@@ -66,23 +68,31 @@ def build_starrocks_type_coverage_case(table_name: str) -> dict[str, object]:
 
 
 def assert_starrocks_type_coverage_values(result_set: object) -> None:
-    assert result_set.value(0, 0) == "1"
-    assert_boolean_value(result_set.value(0, 1))
-    assert result_set.value(0, 2) == "42"
-    float_value = result_set.value(0, 3)
-    assert isinstance(float_value, str)
-    assert float_value.startswith("3.5")
+    columns = result_set.columns
+    assert result_set.value(0, 0) == 1
+
+    bool_value = result_set.value(0, 1)
+    if columns[1].column_type == ColumnType.BOOLEAN:
+        assert_boolean_value(bool_value)
+    else:
+        assert bool_value == 1
+
+    assert result_set.value(0, 2) == 42
+    assert result_set.value(0, 3) == 3.5
     assert result_set.value(0, 4) == "alpha"
     assert result_set.value(0, 5) == "omega"
-    assert_non_empty_value(result_set.value(0, 6), "decimal_value")
-    assert result_set.value(0, 7) == "2024-01-02"
+    assert result_set.value(0, 6) == Decimal("123.45")
+    assert result_set.value(0, 7) == dt.date(2024, 1, 2)
     timestamp_value = result_set.value(0, 8)
-    assert isinstance(timestamp_value, str)
-    assert timestamp_value.startswith("2024-01-02T03:04:05")
+    assert timestamp_value == dt.datetime(2024, 1, 2, 3, 4, 5)
     assert result_set.value(0, 9) == "123456789012345678901234567890"
+
     json_value = result_set.value(0, 10)
-    assert isinstance(json_value, str)
-    assert '"enabled"' in json_value
+    if columns[10].column_type == ColumnType.JSON:
+        assert json_value == {"enabled": True, "count": 1}
+    else:
+        assert isinstance(json_value, str)
+        assert '"enabled"' in json_value
 
 
 async def assert_starrocks_additional_type_coverage(connection: object) -> None:
@@ -99,12 +109,12 @@ async def assert_starrocks_additional_type_coverage(connection: object) -> None:
             {"name": "map_value", "column_type": ColumnType.TEXT},
             {"name": "struct_value", "column_type": ColumnType.TEXT},
         ])
-        assert result_set.value(0, 0) == "1"
-        assert result_set.value(0, 1) == "2"
-        assert result_set.value(0, 2) == "3"
-        assert result_set.value(0, 3) == "4"
-        assert result_set.value(0, 4) == "5.5"
-        assert result_set.value(0, 5) == "6.5"
+        assert result_set.value(0, 0) == 1
+        assert result_set.value(0, 1) == 2
+        assert result_set.value(0, 2) == 3
+        assert result_set.value(0, 3) == 4
+        assert result_set.value(0, 4) == 5.5
+        assert result_set.value(0, 5) == 6.5
         assert result_set.value(0, 6) == "[1,2,3]"
         assert result_set.value(0, 7) == '{"a":1,"b":2}'
         assert result_set.value(0, 8) == '{"col1":1,"col2":"alpha"}'

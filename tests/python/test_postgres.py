@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import datetime as dt
 import unittest
+import uuid
+from decimal import Decimal
 
 from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_hex_value, assert_non_empty_value, assert_type_coverage, execute_non_query, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
@@ -79,32 +82,40 @@ def build_postgres_type_coverage_case(table_name: str) -> dict[str, object]:
 
 
 def assert_postgres_type_coverage_values(result_set: object) -> None:
-    assert result_set.value(0, 0) == "1"
+    columns = result_set.columns
+    assert result_set.value(0, 0) == 1
     assert_boolean_value(result_set.value(0, 1))
-    assert result_set.value(0, 2) == "42"
-    float_value = result_set.value(0, 3)
-    assert isinstance(float_value, str)
-    assert float_value.startswith("3.5")
+    assert result_set.value(0, 2) == 42
+    assert result_set.value(0, 3) == 3.5
     assert result_set.value(0, 4) == "alpha"
-    assert result_set.value(0, 5) == "0102ff"
-    assert_non_empty_value(result_set.value(0, 6), "decimal_value")
-    assert result_set.value(0, 7) == "2024-01-02"
+    assert result_set.value(0, 5) == b"\x01\x02\xff"
+
+    decimal_value = result_set.value(0, 6)
+    if columns[6].column_type == ColumnType.DECIMAL:
+        assert decimal_value == Decimal("123.45")
+    else:
+        assert decimal_value == "123.45"
+
+    assert result_set.value(0, 7) == dt.date(2024, 1, 2)
     time_value = result_set.value(0, 8)
-    assert isinstance(time_value, str)
-    assert time_value.startswith("03:04:05")
+    assert isinstance(time_value, dt.time)
+    assert time_value.isoformat().startswith("03:04:05")
     interval_value = result_set.value(0, 9)
     assert isinstance(interval_value, str)
     assert interval_value.startswith("P0M1DT00:00:02")
-    assert result_set.value(0, 10) == "550e8400-e29b-41d4-a716-446655440000"
+    assert result_set.value(0, 10) == uuid.UUID("550e8400-e29b-41d4-a716-446655440000")
     assert result_set.value(0, 11) == "<a>1</a>"
-    assert result_set.value(0, 12) == "[1,2,3]"
+    assert result_set.value(0, 12) == [1, 2, 3]
     assert result_set.value(0, 13) == "127.0.0.1"
     timestamp_value = result_set.value(0, 14)
-    assert isinstance(timestamp_value, str)
-    assert timestamp_value.startswith("2024-01-02T03:04:05")
+    assert timestamp_value == dt.datetime(2024, 1, 2, 3, 4, 5)
+
     json_value = result_set.value(0, 15)
-    assert isinstance(json_value, str)
-    assert '"enabled"' in json_value
+    if columns[15].column_type == ColumnType.JSON:
+        assert json_value == {"enabled": True, "count": 1}
+    else:
+        assert isinstance(json_value, str)
+        assert '"enabled"' in json_value
 
 
 async def assert_postgres_additional_type_coverage(connection: object) -> None:
@@ -117,7 +128,7 @@ async def assert_postgres_additional_type_coverage(connection: object) -> None:
             assert len(result_set.columns) == 1
             assert result_set.columns[0].name == "enum_value"
             assert result_set.columns[0].column_type == ColumnType.BINARY
-            assert result_set.value(0, 0) == "6e6577"
+            assert result_set.value(0, 0) == b"new"
         finally:
             await result_set.close_async()
     finally:
@@ -141,11 +152,11 @@ async def assert_postgres_additional_type_coverage(connection: object) -> None:
             {"name": "timetz_value", "column_type": ColumnType.TIME},
             {"name": "timestamptz_value", "column_type": ColumnType.TIMESTAMP},
         ])
-        assert result_set.value(0, 0) == "1234"
+        assert result_set.value(0, 0) == 1234
         assert result_set.value(0, 3) == "10.0.0.0/24"
         assert result_set.value(0, 4) == "08:00:2b:01:02:03"
         assert result_set.value(0, 5) == "08:00:2b:01:02:03:04:05"
-        assert result_set.value(0, 12) == "2024-01-02T01:04:05.000000"
+        assert result_set.value(0, 12) == dt.datetime(2024, 1, 2, 1, 4, 5)
 
         for index, label in ((1, "bit_value"), (2, "varbit_value"), (6, "tsv_value"), (7, "tsq_value"), (8, "point_value"), (9, "box_value"), (10, "regtype_value"), (11, "timetz_value")):
             assert_hex_value(result_set.value(0, index), label)

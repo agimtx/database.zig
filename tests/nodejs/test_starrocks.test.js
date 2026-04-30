@@ -59,17 +59,26 @@ function buildStarRocksTypeCoverageCase(tableName) {
 }
 
 function assertStarRocksTypeCoverageValues(resultSet) {
-	assert.equal(resultSet.value(0, 0), "1");
-	assertBooleanValue(resultSet.value(0, 1));
-	assert.equal(resultSet.value(0, 2), "42");
-	assert.match(resultSet.value(0, 3), /^3\.5(?:0+)?$/);
+	const columns = resultSet.columns;
+	assert.equal(resultSet.value(0, 0), 1n);
+	if (columns[1].columnType === bindingModule.COLUMN_TYPES.BOOLEAN) {
+		assertBooleanValue(resultSet.value(0, 1));
+	} else {
+		assert.equal(resultSet.value(0, 1), 1n);
+	}
+	assert.equal(resultSet.value(0, 2), 42n);
+	assert.equal(resultSet.value(0, 3), 3.5);
 	assert.equal(resultSet.value(0, 4), "alpha");
 	assert.equal(resultSet.value(0, 5), "omega");
 	assertNonEmptyValue(resultSet.value(0, 6), "decimal_value");
 	assert.equal(resultSet.value(0, 7), "2024-01-02");
 	assert.match(resultSet.value(0, 8), /^2024-01-02T03:04:05(?:\.\d+)?$/);
 	assert.equal(resultSet.value(0, 9), "123456789012345678901234567890");
-	assert.match(resultSet.value(0, 10), /"enabled"/);
+	if (columns[10].columnType === bindingModule.COLUMN_TYPES.JSON) {
+		assert.deepEqual(resultSet.value(0, 10), { enabled: true, count: 1 });
+	} else {
+		assert.match(resultSet.value(0, 10), /"enabled"/);
+	}
 }
 
 const STARROCKS_ADDITIONAL_TYPES_SQL =
@@ -98,12 +107,12 @@ async function assertStarRocksAdditionalTypeCoverage(connection) {
 			{ name: "map_value", type: bindingModule.COLUMN_TYPES.TEXT },
 			{ name: "struct_value", type: bindingModule.COLUMN_TYPES.TEXT },
 		]);
-		assert.equal(resultSet.value(0, 0), "1");
-		assert.equal(resultSet.value(0, 1), "2");
-		assert.equal(resultSet.value(0, 2), "3");
-		assert.equal(resultSet.value(0, 3), "4");
-		assert.equal(resultSet.value(0, 4), "5.5");
-		assert.equal(resultSet.value(0, 5), "6.5");
+		assert.equal(resultSet.value(0, 0), 1n);
+		assert.equal(resultSet.value(0, 1), 2n);
+		assert.equal(resultSet.value(0, 2), 3n);
+		assert.equal(resultSet.value(0, 3), 4n);
+		assert.equal(resultSet.value(0, 4), 5.5);
+		assert.equal(resultSet.value(0, 5), 6.5);
 		assert.equal(resultSet.value(0, 6), "[1,2,3]");
 		assert.equal(resultSet.value(0, 7), '{"a":1,"b":2}');
 		assert.equal(resultSet.value(0, 8), '{"col1":1,"col2":"alpha"}');
