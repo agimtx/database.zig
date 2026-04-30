@@ -12,7 +12,7 @@ class PostgresBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.skipTest(f"DATABASE_ZIG_TEST_SECTION is filtering out {section}")
 
         target = load_test_target(section)
-        database_name = unique_identifier("dbz_pg")
+        database_name = unique_identifier("aq_pg")
         table_name = unique_identifier("records")
         missing_database = unique_identifier("missing_db")
 

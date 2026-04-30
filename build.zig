@@ -38,12 +38,12 @@ pub fn build(b: *std.Build) void {
 
     const shared_lib = b.addLibrary(.{
         .linkage = .dynamic,
-        .name = "database_zig",
+        .name = "aq_database",
         .root_module = makeCAbiModule(b, target, optimize),
     });
 
     b.installArtifact(shared_lib);
-    b.installFile("bindings/c/include/database_zig.h", "include/database_zig.h");
+    b.installFile("bindings/c/include/aq_database.h", "include/aq_database.h");
 
     const unit_tests = b.addTest(.{
         .root_module = makeModule(b, target, optimize),

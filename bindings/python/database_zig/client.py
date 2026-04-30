@@ -177,19 +177,19 @@ class ConnectionManager:
         resolved_path = self._resolve_library_path(library_path)
         self._lib = ctypes.CDLL(str(resolved_path))
         self._configure_abi()
-        self._manager = self._lib.dbz_manager_create()
+        self._manager = self._lib.aq_manager_create()
 
         if not self._manager:
-            raise RuntimeError("failed to create database.zig connection manager")
+            raise RuntimeError("failed to create aq_database connection manager")
 
     def connect(self, driver: str, dsn: str) -> Connection:
         driver_kind = _DRIVER_MAP.get(driver.lower())
         if driver_kind is None:
             raise ValueError(f"unsupported driver: {driver}")
 
-        handle = self._lib.dbz_connection_open(self._manager, driver_kind, dsn.encode("utf-8"))
+        handle = self._lib.aq_connection_open(self._manager, driver_kind, dsn.encode("utf-8"))
         if handle == 0:
-            self._raise_on_zero_result("dbz_connection_open")
+            self._raise_on_zero_result("aq_connection_open")
 
         return Connection(self, int(handle), driver, dsn)
 
@@ -198,11 +198,11 @@ class ConnectionManager:
         if driver_kind is None:
             raise ValueError(f"unsupported driver: {driver}")
 
-        operation_id = self._lib.dbz_connection_open_async(self._manager, driver_kind, dsn.encode("utf-8"))
+        operation_id = self._lib.aq_connection_open_async(self._manager, driver_kind, dsn.encode("utf-8"))
         if operation_id == 0:
-            self._raise_on_zero_result("dbz_connection_open_async")
+            self._raise_on_zero_result("aq_connection_open_async")
 
-        handle = await self._await_operation_value(operation_id, "dbz_connection_open_async")
+        handle = await self._await_operation_value(operation_id, "aq_connection_open_async")
         return Connection(self, handle, driver, dsn)
 
     def open(self, driver: str, dsn: str) -> int:
@@ -213,8 +213,8 @@ class ConnectionManager:
 
     def close_connection(self, connection_id: int) -> None:
         self._raise_on_status(
-            self._lib.dbz_connection_close(self._manager, connection_id),
-            "dbz_connection_close",
+            self._lib.aq_connection_close(self._manager, connection_id),
+            "aq_connection_close",
         )
 
     async def close_connection_async(self, connection_id: int) -> None:
@@ -223,7 +223,7 @@ class ConnectionManager:
     def close(self) -> None:
         manager = getattr(self, "_manager", None)
         if manager:
-            self._lib.dbz_manager_destroy(manager)
+            self._lib.aq_manager_destroy(manager)
             self._manager = None
 
     async def close_async(self) -> None:
@@ -242,78 +242,78 @@ class ConnectionManager:
         await self.close_async()
 
     def _configure_abi(self) -> None:
-        self._lib.dbz_manager_create.restype = ctypes.c_void_p
-        self._lib.dbz_manager_destroy.argtypes = [ctypes.c_void_p]
-        self._lib.dbz_connection_open.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
-        self._lib.dbz_connection_open.restype = ctypes.c_uint64
-        self._lib.dbz_connection_open_async.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
-        self._lib.dbz_connection_open_async.restype = ctypes.c_uint64
-        self._lib.dbz_connection_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
-        self._lib.dbz_connection_close.restype = ctypes.c_int32
-        self._lib.dbz_connection_test.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8)]
-        self._lib.dbz_connection_test.restype = ctypes.c_int32
-        self._lib.dbz_connection_execute.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
-        self._lib.dbz_connection_execute.restype = ctypes.c_uint64
-        self._lib.dbz_connection_execute_async.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
-        self._lib.dbz_connection_execute_async.restype = ctypes.c_uint64
-        self._lib.dbz_connection_get_tables.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p]
-        self._lib.dbz_connection_get_tables.restype = ctypes.c_uint64
-        self._lib.dbz_connection_get_databases.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
-        self._lib.dbz_connection_get_databases.restype = ctypes.c_uint64
-        self._lib.dbz_result_set_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
-        self._lib.dbz_result_set_close.restype = ctypes.c_int32
-        self._lib.dbz_result_set_row_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
-        self._lib.dbz_result_set_row_count.restype = ctypes.c_int32
-        self._lib.dbz_result_set_affected_rows.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
-        self._lib.dbz_result_set_affected_rows.restype = ctypes.c_int32
-        self._lib.dbz_result_set_column_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)]
-        self._lib.dbz_result_set_column_count.restype = ctypes.c_int32
-        self._lib.dbz_result_set_column_metadata.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(_CColumnMetadata)]
-        self._lib.dbz_result_set_column_metadata.restype = ctypes.c_int32
-        self._lib.dbz_result_set_value.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(_CResultCell)]
-        self._lib.dbz_result_set_value.restype = ctypes.c_int32
-        self._lib.dbz_cursor_open.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
-        self._lib.dbz_cursor_open.restype = ctypes.c_uint64
-        self._lib.dbz_cursor_open_async.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
-        self._lib.dbz_cursor_open_async.restype = ctypes.c_uint64
-        self._lib.dbz_cursor_next.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8)]
-        self._lib.dbz_cursor_next.restype = ctypes.c_int32
-        self._lib.dbz_cursor_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
-        self._lib.dbz_cursor_close.restype = ctypes.c_int32
-        self._lib.dbz_cursor_column_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)]
-        self._lib.dbz_cursor_column_count.restype = ctypes.c_int32
-        self._lib.dbz_cursor_column_metadata.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(_CColumnMetadata)]
-        self._lib.dbz_cursor_column_metadata.restype = ctypes.c_int32
-        self._lib.dbz_manager_open.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
-        self._lib.dbz_manager_open.restype = ctypes.c_uint64
-        self._lib.dbz_manager_open_async.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
-        self._lib.dbz_manager_open_async.restype = ctypes.c_uint64
-        self._lib.dbz_manager_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
-        self._lib.dbz_manager_close.restype = ctypes.c_int32
-        self._lib.dbz_operation_await.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(_COperationResult)]
-        self._lib.dbz_operation_await.restype = ctypes.c_int32
-        self._lib.dbz_last_error_message.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CErrorMessage)]
-        self._lib.dbz_last_error_message.restype = ctypes.c_int32
+        self._lib.aq_manager_create.restype = ctypes.c_void_p
+        self._lib.aq_manager_destroy.argtypes = [ctypes.c_void_p]
+        self._lib.aq_connection_open.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
+        self._lib.aq_connection_open.restype = ctypes.c_uint64
+        self._lib.aq_connection_open_async.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
+        self._lib.aq_connection_open_async.restype = ctypes.c_uint64
+        self._lib.aq_connection_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._lib.aq_connection_close.restype = ctypes.c_int32
+        self._lib.aq_connection_test.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8)]
+        self._lib.aq_connection_test.restype = ctypes.c_int32
+        self._lib.aq_connection_execute.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
+        self._lib.aq_connection_execute.restype = ctypes.c_uint64
+        self._lib.aq_connection_execute_async.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
+        self._lib.aq_connection_execute_async.restype = ctypes.c_uint64
+        self._lib.aq_connection_get_tables.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p]
+        self._lib.aq_connection_get_tables.restype = ctypes.c_uint64
+        self._lib.aq_connection_get_databases.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._lib.aq_connection_get_databases.restype = ctypes.c_uint64
+        self._lib.aq_result_set_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._lib.aq_result_set_close.restype = ctypes.c_int32
+        self._lib.aq_result_set_row_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
+        self._lib.aq_result_set_row_count.restype = ctypes.c_int32
+        self._lib.aq_result_set_affected_rows.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
+        self._lib.aq_result_set_affected_rows.restype = ctypes.c_int32
+        self._lib.aq_result_set_column_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)]
+        self._lib.aq_result_set_column_count.restype = ctypes.c_int32
+        self._lib.aq_result_set_column_metadata.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(_CColumnMetadata)]
+        self._lib.aq_result_set_column_metadata.restype = ctypes.c_int32
+        self._lib.aq_result_set_value.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(_CResultCell)]
+        self._lib.aq_result_set_value.restype = ctypes.c_int32
+        self._lib.aq_cursor_open.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
+        self._lib.aq_cursor_open.restype = ctypes.c_uint64
+        self._lib.aq_cursor_open_async.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
+        self._lib.aq_cursor_open_async.restype = ctypes.c_uint64
+        self._lib.aq_cursor_next.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8)]
+        self._lib.aq_cursor_next.restype = ctypes.c_int32
+        self._lib.aq_cursor_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._lib.aq_cursor_close.restype = ctypes.c_int32
+        self._lib.aq_cursor_column_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)]
+        self._lib.aq_cursor_column_count.restype = ctypes.c_int32
+        self._lib.aq_cursor_column_metadata.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(_CColumnMetadata)]
+        self._lib.aq_cursor_column_metadata.restype = ctypes.c_int32
+        self._lib.aq_manager_open.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
+        self._lib.aq_manager_open.restype = ctypes.c_uint64
+        self._lib.aq_manager_open_async.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p]
+        self._lib.aq_manager_open_async.restype = ctypes.c_uint64
+        self._lib.aq_manager_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._lib.aq_manager_close.restype = ctypes.c_int32
+        self._lib.aq_operation_await.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(_COperationResult)]
+        self._lib.aq_operation_await.restype = ctypes.c_int32
+        self._lib.aq_last_error_message.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CErrorMessage)]
+        self._lib.aq_last_error_message.restype = ctypes.c_int32
 
     def _execute(self, connection_id: int, sql: str) -> ResultSet:
-        result_set_id = self._lib.dbz_connection_execute(self._manager, connection_id, sql.encode("utf-8"))
+        result_set_id = self._lib.aq_connection_execute(self._manager, connection_id, sql.encode("utf-8"))
         if result_set_id == 0:
-            self._raise_on_zero_result("dbz_connection_execute")
+            self._raise_on_zero_result("aq_connection_execute")
         return ResultSet(self, int(result_set_id))
 
     async def _execute_async(self, connection_id: int, sql: str) -> ResultSet:
-        operation_id = self._lib.dbz_connection_execute_async(self._manager, connection_id, sql.encode("utf-8"))
+        operation_id = self._lib.aq_connection_execute_async(self._manager, connection_id, sql.encode("utf-8"))
         if operation_id == 0:
-            self._raise_on_zero_result("dbz_connection_execute_async")
+            self._raise_on_zero_result("aq_connection_execute_async")
 
-        result_set_id = await self._await_operation_value(operation_id, "dbz_connection_execute_async")
+        result_set_id = await self._await_operation_value(operation_id, "aq_connection_execute_async")
         return ResultSet(self, result_set_id)
 
     def _connection_test(self, connection_id: int) -> bool:
         out_value = ctypes.c_uint8()
         self._raise_on_status(
-            self._lib.dbz_connection_test(self._manager, connection_id, ctypes.byref(out_value)),
-            "dbz_connection_test",
+            self._lib.aq_connection_test(self._manager, connection_id, ctypes.byref(out_value)),
+            "aq_connection_test",
         )
         return bool(out_value.value)
 
@@ -321,23 +321,23 @@ class ConnectionManager:
         return await asyncio.to_thread(self._connection_test, connection_id)
 
     def _get_databases(self, connection_id: int) -> ResultSet:
-        result_set_id = self._lib.dbz_connection_get_databases(self._manager, connection_id)
+        result_set_id = self._lib.aq_connection_get_databases(self._manager, connection_id)
         if result_set_id == 0:
-            self._raise_on_zero_result("dbz_connection_get_databases")
+            self._raise_on_zero_result("aq_connection_get_databases")
         return ResultSet(self, int(result_set_id))
 
     async def _get_databases_async(self, connection_id: int) -> ResultSet:
         return await asyncio.to_thread(self._get_databases, connection_id)
 
     def _get_tables(self, connection_id: int, catalog: str | None, database: str | None) -> ResultSet:
-        result_set_id = self._lib.dbz_connection_get_tables(
+        result_set_id = self._lib.aq_connection_get_tables(
             self._manager,
             connection_id,
             catalog.encode("utf-8") if catalog is not None else None,
             database.encode("utf-8") if database is not None else None,
         )
         if result_set_id == 0:
-            self._raise_on_zero_result("dbz_connection_get_tables")
+            self._raise_on_zero_result("aq_connection_get_tables")
         return ResultSet(self, int(result_set_id))
 
     async def _get_tables_async(self, connection_id: int, catalog: str | None, database: str | None) -> ResultSet:
@@ -345,68 +345,68 @@ class ConnectionManager:
 
     def _result_set_close(self, result_set_id: int) -> None:
         self._raise_on_status(
-            self._lib.dbz_result_set_close(self._manager, result_set_id),
-            "dbz_result_set_close",
+            self._lib.aq_result_set_close(self._manager, result_set_id),
+            "aq_result_set_close",
         )
 
     def _result_set_row_count(self, result_set_id: int) -> int:
         out_value = ctypes.c_uint64()
         self._raise_on_status(
-            self._lib.dbz_result_set_row_count(self._manager, result_set_id, ctypes.byref(out_value)),
-            "dbz_result_set_row_count",
+            self._lib.aq_result_set_row_count(self._manager, result_set_id, ctypes.byref(out_value)),
+            "aq_result_set_row_count",
         )
         return int(out_value.value)
 
     def _result_set_affected_rows(self, result_set_id: int) -> int:
         out_value = ctypes.c_uint64()
         self._raise_on_status(
-            self._lib.dbz_result_set_affected_rows(self._manager, result_set_id, ctypes.byref(out_value)),
-            "dbz_result_set_affected_rows",
+            self._lib.aq_result_set_affected_rows(self._manager, result_set_id, ctypes.byref(out_value)),
+            "aq_result_set_affected_rows",
         )
         return int(out_value.value)
 
     def _result_set_columns(self, result_set_id: int) -> list[ColumnMetadata]:
         count = ctypes.c_size_t()
         self._raise_on_status(
-            self._lib.dbz_result_set_column_count(self._manager, result_set_id, ctypes.byref(count)),
-            "dbz_result_set_column_count",
+            self._lib.aq_result_set_column_count(self._manager, result_set_id, ctypes.byref(count)),
+            "aq_result_set_column_count",
         )
 
         columns: list[ColumnMetadata] = []
         for index in range(count.value):
-            columns.append(self._read_column_metadata("dbz_result_set_column_metadata", result_set_id, index, self._lib.dbz_result_set_column_metadata))
+            columns.append(self._read_column_metadata("aq_result_set_column_metadata", result_set_id, index, self._lib.aq_result_set_column_metadata))
 
         return columns
 
     def _result_set_value(self, result_set_id: int, row_index: int, column_index: int) -> str | None:
         raw_cell = _CResultCell()
         self._raise_on_status(
-            self._lib.dbz_result_set_value(self._manager, result_set_id, row_index, column_index, ctypes.byref(raw_cell)),
-            "dbz_result_set_value",
+            self._lib.aq_result_set_value(self._manager, result_set_id, row_index, column_index, ctypes.byref(raw_cell)),
+            "aq_result_set_value",
         )
         if raw_cell.is_null:
             return None
         return ctypes.string_at(raw_cell.text_ptr, raw_cell.text_len).decode("utf-8")
 
     def _open_cursor(self, connection_id: int, sql: str) -> Cursor:
-        cursor_id = self._lib.dbz_cursor_open(self._manager, connection_id, sql.encode("utf-8"))
+        cursor_id = self._lib.aq_cursor_open(self._manager, connection_id, sql.encode("utf-8"))
         if cursor_id == 0:
-            self._raise_on_zero_result("dbz_cursor_open")
+            self._raise_on_zero_result("aq_cursor_open")
         return Cursor(self, int(cursor_id))
 
     async def _open_cursor_async(self, connection_id: int, sql: str) -> Cursor:
-        operation_id = self._lib.dbz_cursor_open_async(self._manager, connection_id, sql.encode("utf-8"))
+        operation_id = self._lib.aq_cursor_open_async(self._manager, connection_id, sql.encode("utf-8"))
         if operation_id == 0:
-            self._raise_on_zero_result("dbz_cursor_open_async")
+            self._raise_on_zero_result("aq_cursor_open_async")
 
-        cursor_id = await self._await_operation_value(operation_id, "dbz_cursor_open_async")
+        cursor_id = await self._await_operation_value(operation_id, "aq_cursor_open_async")
         return Cursor(self, cursor_id)
 
     def _await_operation(self, operation_id: int) -> _COperationResult:
         result = _COperationResult()
         self._raise_on_status(
-            self._lib.dbz_operation_await(self._manager, operation_id, ctypes.byref(result)),
-            "dbz_operation_await",
+            self._lib.aq_operation_await(self._manager, operation_id, ctypes.byref(result)),
+            "aq_operation_await",
         )
         return result
 
@@ -420,27 +420,27 @@ class ConnectionManager:
     def _cursor_next(self, cursor_id: int) -> bool:
         out_value = ctypes.c_uint8()
         self._raise_on_status(
-            self._lib.dbz_cursor_next(self._manager, cursor_id, ctypes.byref(out_value)),
-            "dbz_cursor_next",
+            self._lib.aq_cursor_next(self._manager, cursor_id, ctypes.byref(out_value)),
+            "aq_cursor_next",
         )
         return bool(out_value.value)
 
     def _cursor_close(self, cursor_id: int) -> None:
         self._raise_on_status(
-            self._lib.dbz_cursor_close(self._manager, cursor_id),
-            "dbz_cursor_close",
+            self._lib.aq_cursor_close(self._manager, cursor_id),
+            "aq_cursor_close",
         )
 
     def _cursor_columns(self, cursor_id: int) -> list[ColumnMetadata]:
         count = ctypes.c_size_t()
         self._raise_on_status(
-            self._lib.dbz_cursor_column_count(self._manager, cursor_id, ctypes.byref(count)),
-            "dbz_cursor_column_count",
+            self._lib.aq_cursor_column_count(self._manager, cursor_id, ctypes.byref(count)),
+            "aq_cursor_column_count",
         )
 
         columns: list[ColumnMetadata] = []
         for index in range(count.value):
-            columns.append(self._read_column_metadata("dbz_cursor_column_metadata", cursor_id, index, self._lib.dbz_cursor_column_metadata))
+            columns.append(self._read_column_metadata("aq_cursor_column_metadata", cursor_id, index, self._lib.aq_cursor_column_metadata))
 
         return columns
 
@@ -470,7 +470,7 @@ class ConnectionManager:
 
     def _last_error_message(self) -> str | None:
         raw_error = _CErrorMessage()
-        status = self._lib.dbz_last_error_message(self._manager, ctypes.byref(raw_error))
+        status = self._lib.aq_last_error_message(self._manager, ctypes.byref(raw_error))
         if status != 0 or not raw_error.message_ptr or raw_error.message_len == 0:
             return None
         return ctypes.string_at(raw_error.message_ptr, raw_error.message_len).decode("utf-8")
@@ -484,9 +484,9 @@ class ConnectionManager:
             return Path(env_path)
 
         filename = {
-            "Darwin": "libdatabase_zig.dylib",
-            "Linux": "libdatabase_zig.so",
-            "Windows": "database_zig.dll",
+            "Darwin": "libaq_database.dylib",
+            "Linux": "libaq_database.so",
+            "Windows": "aq_database.dll",
         }.get(platform.system())
 
         if filename is None:

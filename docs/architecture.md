@@ -12,7 +12,7 @@
 ### 2. Public C ABI
 
 - `src/ffi/c_api.zig`: stable public C ABI.
-- `bindings/c/include/database_zig.h`: C header.
+- `bindings/c/include/aq_database.h`: C header.
 - `bindings/python/`: thin Python wrapper over the public C ABI.
 - `bindings/nodejs/`: thin Node.js wrapper over the public C ABI.
 

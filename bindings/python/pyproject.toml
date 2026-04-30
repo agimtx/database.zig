@@ -5,5 +5,5 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "database-zig"
 version = "0.1.0"
-description = "Thin Python binding for the database.zig shared library"
+description = "Thin Python binding for the aq_database shared library"
 requires-python = ">=3.11"

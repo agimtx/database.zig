@@ -165,7 +165,7 @@ function readResultSetValues(resultSet, columnIndex) {
 }
 
 async function runPostgresLifecycleTest(target) {
-  const databaseName = uniqueIdentifier("dbz_pg");
+  const databaseName = uniqueIdentifier("aq_pg");
   const tableName = uniqueIdentifier("records");
   const missingDatabase = uniqueIdentifier("missing_db");
   const manager = new bindingModule.ConnectionManager();
@@ -246,7 +246,7 @@ async function runPostgresLifecycleTest(target) {
 }
 
 async function runStarRocksLifecycleTest(target) {
-  const databaseName = uniqueIdentifier("dbz_sr");
+  const databaseName = uniqueIdentifier("aq_sr");
   const tableName = uniqueIdentifier("records");
   const missingDatabase = uniqueIdentifier("missing_db");
   const manager = new bindingModule.ConnectionManager();
