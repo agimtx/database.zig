@@ -721,7 +721,7 @@ fn columnsFromSchema(allocator: std.mem.Allocator, schema: *ArrowSchema) ![]type
         const name = if (child.name) |raw_name| std.mem.span(raw_name) else "";
         columns[index] = .{
             .name = try allocator.dupe(u8, name),
-            .column_type = mapArrowFormatToColumnType(if (child.format) |fmt| std.mem.span(fmt) else ""),
+            .column_type = mapArrowSchemaToColumnType(child),
             .nullable = (child.flags & arrow_flag_nullable) != 0,
         };
     }
@@ -771,7 +771,7 @@ fn cellFromArrow(
     schema: *ArrowSchema,
     array: *ArrowArray,
     row_index: usize,
-) !types.ResultCell {
+) anyerror!types.ResultCell {
     if (isNullAt(array, row_index)) {
         return .{
             .text = try allocator.alloc(u8, 0),
@@ -779,11 +779,77 @@ fn cellFromArrow(
         };
     }
 
+    if (schema.dictionary != null) {
+        return cellFromArrowDictionary(allocator, schema, array, row_index);
+    }
+
     const format = if (schema.format) |value| std.mem.span(value) else "";
     return .{
         .text = try extractArrowValueText(allocator, format, array, row_index),
         .is_null = false,
     };
+}
+
+fn cellFromArrowDictionary(
+    allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
+    array: *ArrowArray,
+    row_index: usize,
+) anyerror!types.ResultCell {
+    const dictionary_schema = schema.dictionary orelse return Error.QueryFailed;
+    const dictionary_array = array.dictionary orelse return Error.QueryFailed;
+    const format = if (schema.format) |value| std.mem.span(value) else "";
+    const dictionary_index = try readArrowDictionaryIndex(format, array, row_index);
+    if (dictionary_index >= @as(usize, @intCast(dictionary_array.length))) {
+        return Error.QueryFailed;
+    }
+    return cellFromArrow(allocator, dictionary_schema, dictionary_array, dictionary_index);
+}
+
+fn readArrowDictionaryIndex(format: []const u8, array: *ArrowArray, row_index: usize) !usize {
+    if (format.len == 0) {
+        return Error.QueryFailed;
+    }
+
+    return switch (format[0]) {
+        'c' => readArrowDictionaryIndexValue(i8, array, row_index),
+        'C' => readArrowDictionaryIndexValue(u8, array, row_index),
+        's' => readArrowDictionaryIndexValue(i16, array, row_index),
+        'S' => readArrowDictionaryIndexValue(u16, array, row_index),
+        'i' => readArrowDictionaryIndexValue(i32, array, row_index),
+        'I' => readArrowDictionaryIndexValue(u32, array, row_index),
+        'l' => readArrowDictionaryIndexValue(i64, array, row_index),
+        'L' => readArrowDictionaryIndexValue(u64, array, row_index),
+        else => Error.QueryFailed,
+    };
+}
+
+fn readArrowDictionaryIndexValue(
+    comptime T: type,
+    array: *ArrowArray,
+    row_index: usize,
+) !usize {
+    const value = try readArrowPrimitiveValue(T, array, row_index);
+    switch (@typeInfo(T)) {
+        .int => if (value < 0) {
+            return Error.QueryFailed;
+        },
+        else => {},
+    }
+    return @intCast(value);
+}
+
+fn readArrowPrimitiveValue(
+    comptime T: type,
+    array: *ArrowArray,
+    row_index: usize,
+) !T {
+    if (array.buffers == null or array.buffers[1] == null) {
+        return Error.QueryFailed;
+    }
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const values: [*]const T = @ptrCast(@alignCast(array.buffers[1].?));
+    return values[logical_index];
 }
 
 fn isNullAt(array: *ArrowArray, row_index: usize) bool {
@@ -964,18 +1030,172 @@ fn encodeHexAlloc(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
     return encoded;
 }
 
+fn mapArrowSchemaToColumnType(schema: *ArrowSchema) types.ColumnType {
+    if (schema.dictionary) |dictionary| {
+        return mapArrowSchemaToColumnType(dictionary);
+    }
+
+    if (arrowExtensionName(schema.metadata)) |extension_name| {
+        if (std.mem.eql(u8, extension_name, "arrow.json")) return .json;
+        if (std.mem.eql(u8, extension_name, "arrow.uuid")) return .text;
+    }
+
+    return mapArrowFormatToColumnType(if (schema.format) |fmt| std.mem.span(fmt) else "");
+}
+
+fn arrowExtensionName(metadata: ?[*:0]const u8) ?[]const u8 {
+    const metadata_ptr = metadata orelse return null;
+    const bytes: [*]const u8 = @ptrCast(metadata_ptr);
+    var offset: usize = 0;
+    const pair_count = readArrowMetadataI32(bytes, &offset) orelse return null;
+    if (pair_count < 0) return null;
+
+    var pair_index: i32 = 0;
+    while (pair_index < pair_count) : (pair_index += 1) {
+        const key_length = readArrowMetadataI32(bytes, &offset) orelse return null;
+        if (key_length < 0) return null;
+        const key_len: usize = @intCast(key_length);
+        const key = bytes[offset .. offset + key_len];
+        offset += key_len;
+
+        const value_length = readArrowMetadataI32(bytes, &offset) orelse return null;
+        if (value_length < 0) return null;
+        const value_len: usize = @intCast(value_length);
+        const value = bytes[offset .. offset + value_len];
+        offset += value_len;
+
+        if (std.mem.eql(u8, key, "ARROW:extension:name")) {
+            return value;
+        }
+    }
+
+    return null;
+}
+
+fn readArrowMetadataI32(bytes: [*]const u8, offset: *usize) ?i32 {
+    const start = offset.*;
+    const value_bytes: *const [@sizeOf(i32)]u8 = @ptrCast(bytes + start);
+    const value = std.mem.readInt(i32, value_bytes, .little);
+    offset.* = start + @sizeOf(i32);
+    return value;
+}
+
 fn mapArrowFormatToColumnType(format: []const u8) types.ColumnType {
     if (format.len == 0) return .unknown;
+    if (format[0] == 'v' and format.len >= 2) {
+        return switch (format[1]) {
+            'u' => .text,
+            'z' => .binary,
+            else => .unknown,
+        };
+    }
     return switch (format[0]) {
         'b' => .boolean,
         'c', 'C', 's', 'S', 'i', 'I', 'l', 'L' => .int64,
-        'f', 'g' => .float64,
+        'e', 'f', 'g' => .float64,
         'u', 'U' => .text,
         'z', 'Z', 'w' => .binary,
         'd' => .decimal,
         't', 'T' => .timestamp,
         else => .unknown,
     };
+}
+
+test "adbc backend normalizes dictionary encoded utf8 columns" {
+    var dictionary_schema = ArrowSchema{
+        .format = "u",
+    };
+    var child_schema = ArrowSchema{
+        .format = "i",
+        .name = "status",
+        .dictionary = &dictionary_schema,
+    };
+    var children = [_]?*ArrowSchema{&child_schema};
+    var root_schema = ArrowSchema{
+        .n_children = 1,
+        .children = @ptrCast(&children[0]),
+    };
+
+    const columns = try columnsFromSchema(std.testing.allocator, &root_schema);
+    defer freeColumns(std.testing.allocator, columns);
+
+    try std.testing.expectEqual(@as(usize, 1), columns.len);
+    try std.testing.expectEqualStrings("status", columns[0].name);
+    try std.testing.expectEqual(types.ColumnType.text, columns[0].column_type);
+}
+
+test "adbc backend reads dictionary encoded utf8 cell values" {
+    var dictionary_schema = ArrowSchema{
+        .format = "u",
+    };
+    var index_schema = ArrowSchema{
+        .format = "i",
+        .dictionary = &dictionary_schema,
+    };
+
+    var dictionary_offsets = [_]i32{ 0, 5, 9 };
+    var dictionary_values = [_]u8{ 'a', 'l', 'p', 'h', 'a', 'b', 'e', 't', 'a' };
+    var dictionary_buffers = [_]?*const anyopaque{
+        null,
+        @ptrCast(&dictionary_offsets[0]),
+        @ptrCast(&dictionary_values[0]),
+    };
+    var dictionary_array = ArrowArray{
+        .length = 2,
+        .n_buffers = 3,
+        .buffers = @ptrCast(&dictionary_buffers[0]),
+    };
+
+    var indices = [_]i32{ 0, 1 };
+    var index_buffers = [_]?*const anyopaque{
+        null,
+        @ptrCast(&indices[0]),
+    };
+    var index_array = ArrowArray{
+        .length = 2,
+        .n_buffers = 2,
+        .buffers = @ptrCast(&index_buffers[0]),
+        .dictionary = &dictionary_array,
+    };
+
+    const first = try cellFromArrow(std.testing.allocator, &index_schema, &index_array, 0);
+    defer std.testing.allocator.free(first.text);
+    try std.testing.expectEqualStrings("alpha", first.text);
+    try std.testing.expect(!first.is_null);
+
+    const second = try cellFromArrow(std.testing.allocator, &index_schema, &index_array, 1);
+    defer std.testing.allocator.free(second.text);
+    try std.testing.expectEqualStrings("beta", second.text);
+    try std.testing.expect(!second.is_null);
+}
+
+test "adbc backend recognizes arrow extension and view logical types" {
+    const key = "ARROW:extension:name";
+    const value = "arrow.json";
+    const metadata_len = (@sizeOf(i32) * 3) + key.len + value.len;
+    var metadata = try std.testing.allocator.allocSentinel(u8, metadata_len, 0);
+    defer std.testing.allocator.free(metadata);
+
+    var offset: usize = 0;
+    std.mem.writeInt(i32, @ptrCast(metadata.ptr + offset), 1, .little);
+    offset += @sizeOf(i32);
+    std.mem.writeInt(i32, @ptrCast(metadata.ptr + offset), @intCast(key.len), .little);
+    offset += @sizeOf(i32);
+    @memcpy(metadata[offset .. offset + key.len], key);
+    offset += key.len;
+    std.mem.writeInt(i32, @ptrCast(metadata.ptr + offset), @intCast(value.len), .little);
+    offset += @sizeOf(i32);
+    @memcpy(metadata[offset .. offset + value.len], value);
+
+    var schema = ArrowSchema{
+        .format = "u",
+        .metadata = metadata.ptr,
+    };
+
+    try std.testing.expectEqual(types.ColumnType.json, mapArrowSchemaToColumnType(&schema));
+    try std.testing.expectEqual(types.ColumnType.text, mapArrowFormatToColumnType("vu"));
+    try std.testing.expectEqual(types.ColumnType.binary, mapArrowFormatToColumnType("vz"));
+    try std.testing.expectEqual(types.ColumnType.float64, mapArrowFormatToColumnType("e"));
 }
 
 fn freeColumns(allocator: std.mem.Allocator, columns: []const types.ColumnMetadata) void {

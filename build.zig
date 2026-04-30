@@ -2,6 +2,21 @@ const std = @import("std");
 
 const adbc_include_dir = "third_party/adbc/1.11.0/include";
 
+fn deleteFileIfExists(path: []const u8) void {
+    std.fs.cwd().deleteFile(path) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => std.debug.panic("failed to delete legacy artifact {s}: {s}", .{ path, @errorName(err) }),
+    };
+}
+
+fn removeLegacyInstallArtifacts() void {
+    deleteFileIfExists("zig-out/lib/libdatabase_zig.dylib");
+    deleteFileIfExists("zig-out/lib/libdatabase_zig.so");
+    deleteFileIfExists("zig-out/lib/database_zig.dll");
+    deleteFileIfExists("zig-out/lib/database_zig.lib");
+    deleteFileIfExists("zig-out/include/database_zig.h");
+}
+
 fn makeModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -33,6 +48,8 @@ fn makeCAbiModule(
 }
 
 pub fn build(b: *std.Build) void {
+    removeLegacyInstallArtifacts();
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 

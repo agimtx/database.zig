@@ -164,6 +164,149 @@ function readResultSetValues(resultSet, columnIndex) {
   return values;
 }
 
+function buildTypeCoverageCase(sectionName, tableName) {
+  if (sectionName === "postgres") {
+    return {
+      metadataDatabase: "public",
+      createTableSql:
+        `create table ${tableName} (` +
+        "id bigint primary key, " +
+        "bool_value boolean not null, " +
+        "int_value bigint not null, " +
+        "float_value double precision not null, " +
+        "text_value text not null, " +
+        "binary_value bytea not null, " +
+        "decimal_value numeric(10, 2) not null, " +
+        "timestamp_value timestamp not null, " +
+        "json_value jsonb not null" +
+        ")",
+      insertSql:
+        `insert into ${tableName} (` +
+        "id, bool_value, int_value, float_value, text_value, binary_value, decimal_value, timestamp_value, json_value" +
+        ") values (" +
+        "1, true, 42, 3.5, 'alpha', decode('0102ff', 'hex'), 123.45, timestamp '2024-01-02 03:04:05', '{\"enabled\":true,\"count\":1}'::jsonb" +
+        ")",
+      selectSql:
+        `select id, bool_value, int_value, float_value, text_value, binary_value, decimal_value, timestamp_value, json_value from ${tableName} order by id`,
+      expectedColumns: [
+        { name: "id", type: bindingModule.COLUMN_TYPES.INT64 },
+        { name: "bool_value", type: bindingModule.COLUMN_TYPES.BOOLEAN },
+        { name: "int_value", type: bindingModule.COLUMN_TYPES.INT64 },
+        { name: "float_value", type: bindingModule.COLUMN_TYPES.FLOAT64 },
+        { name: "text_value", type: bindingModule.COLUMN_TYPES.TEXT },
+        { name: "binary_value", type: bindingModule.COLUMN_TYPES.BINARY },
+        { name: "decimal_value", type: [bindingModule.COLUMN_TYPES.DECIMAL, bindingModule.COLUMN_TYPES.TEXT] },
+        { name: "timestamp_value", type: bindingModule.COLUMN_TYPES.TIMESTAMP },
+        { name: "json_value", type: [bindingModule.COLUMN_TYPES.JSON, bindingModule.COLUMN_TYPES.TEXT] },
+      ],
+      assertValues(resultSet) {
+        assert.equal(resultSet.value(0, 0), "1");
+        assertBooleanValue(resultSet.value(0, 1));
+        assert.equal(resultSet.value(0, 2), "42");
+        assert.match(resultSet.value(0, 3), /^3\.5(?:0+)?$/);
+        assert.equal(resultSet.value(0, 4), "alpha");
+        assert.equal(resultSet.value(0, 5), "0102ff");
+        assertNonEmptyValue(resultSet.value(0, 6), "decimal_value");
+        assert.match(resultSet.value(0, 7), /^-?\d+$/);
+        assert.match(resultSet.value(0, 8), /"enabled"/);
+      },
+    };
+  }
+
+  if (sectionName === "starrocks") {
+    return {
+      metadataDatabase: null,
+      createTableSql:
+        `create table ${tableName} (` +
+        "id bigint not null, " +
+        "bool_value boolean not null, " +
+        "int_value bigint not null, " +
+        "float_value double not null, " +
+        "text_value string not null, " +
+        "decimal_value decimal(10, 2) not null, " +
+        "timestamp_value datetime not null, " +
+        "json_value json not null" +
+        `) duplicate key(id) distributed by hash(id) buckets 1 properties (\"replication_num\" = \"1\")`,
+      insertSql:
+        `insert into ${tableName} (` +
+        "id, bool_value, int_value, float_value, text_value, decimal_value, timestamp_value, json_value" +
+        ") values (" +
+        "1, true, 42, 3.5, 'alpha', 123.45, '2024-01-02 03:04:05', parse_json('{\"enabled\": true, \"count\": 1}')" +
+        ")",
+      selectSql:
+        `select id, bool_value, int_value, float_value, text_value, decimal_value, timestamp_value, json_value from ${tableName} order by id`,
+      expectedColumns: [
+        { name: "id", type: bindingModule.COLUMN_TYPES.INT64 },
+        { name: "bool_value", type: [bindingModule.COLUMN_TYPES.BOOLEAN, bindingModule.COLUMN_TYPES.INT64] },
+        { name: "int_value", type: bindingModule.COLUMN_TYPES.INT64 },
+        { name: "float_value", type: bindingModule.COLUMN_TYPES.FLOAT64 },
+        { name: "text_value", type: bindingModule.COLUMN_TYPES.TEXT },
+        { name: "decimal_value", type: bindingModule.COLUMN_TYPES.DECIMAL },
+        { name: "timestamp_value", type: bindingModule.COLUMN_TYPES.TIMESTAMP },
+        { name: "json_value", type: [bindingModule.COLUMN_TYPES.JSON, bindingModule.COLUMN_TYPES.TEXT] },
+      ],
+      assertValues(resultSet) {
+        assert.equal(resultSet.value(0, 0), "1");
+        assertBooleanValue(resultSet.value(0, 1));
+        assert.equal(resultSet.value(0, 2), "42");
+        assert.match(resultSet.value(0, 3), /^3\.5(?:0+)?$/);
+        assert.equal(resultSet.value(0, 4), "alpha");
+        assertNonEmptyValue(resultSet.value(0, 5), "decimal_value");
+        assert.match(resultSet.value(0, 6), /^-?\d+$/);
+        assert.match(resultSet.value(0, 7), /"enabled"/);
+      },
+    };
+  }
+
+  throw new Error(`unsupported type coverage database: ${sectionName}`);
+}
+
+function assertNonEmptyValue(value, label) {
+  assert.equal(typeof value, "string", `${label} should be returned as text`);
+  assert.ok(value.length > 0, `${label} should not be empty`);
+}
+
+function assertBooleanValue(value) {
+  assert.ok(value === "true" || value === "false" || value === "1" || value === "0", `unexpected boolean text: ${value}`);
+}
+
+function assertColumnMetadata(columns, expectedColumns) {
+  assert.equal(columns.length, expectedColumns.length, `expected ${expectedColumns.length} columns, got ${columns.length}`);
+  for (let index = 0; index < expectedColumns.length; index += 1) {
+    const actual = columns[index];
+    const expected = expectedColumns[index];
+    assert.equal(actual.name, expected.name, `column ${index} name mismatch`);
+    const expectedTypes = Array.isArray(expected.type) ? expected.type : [expected.type];
+    assert.ok(expectedTypes.includes(actual.columnType), `column ${actual.name} type mismatch: got ${actual.columnType}, expected one of ${expectedTypes.join(", ")}`);
+  }
+}
+
+async function assertTypeCoverage(connection, sectionName, tableName) {
+  const typeCoverage = buildTypeCoverageCase(sectionName, tableName);
+  await executeNonQuery(connection, typeCoverage.createTableSql);
+  await executeNonQuery(connection, typeCoverage.insertSql);
+
+  const resultSet = await connection.execute(typeCoverage.selectSql);
+  try {
+    assert.equal(resultSet.rowCount, 1);
+    assertColumnMetadata(resultSet.columns, typeCoverage.expectedColumns);
+    typeCoverage.assertValues(resultSet);
+  } finally {
+    await resultSet.close();
+  }
+
+  const cursor = await connection.cursor(typeCoverage.selectSql);
+  try {
+    assertColumnMetadata(cursor.columns, typeCoverage.expectedColumns);
+    assert.equal(cursor.next(), true);
+    assert.equal(cursor.next(), false);
+  } finally {
+    await cursor.close();
+  }
+
+  return typeCoverage;
+}
+
 async function runPostgresLifecycleTest(target) {
   const databaseName = uniqueIdentifier("aq_pg");
   const tableName = uniqueIdentifier("records");
@@ -185,19 +328,9 @@ async function runPostgresLifecycleTest(target) {
 
       const databaseConnection = await manager.connect(target.driver, target.dsn(databaseName));
       try {
-        await executeNonQuery(databaseConnection, `create table ${tableName} (id bigint primary key, value text not null)`);
-        await executeNonQuery(databaseConnection, `insert into ${tableName} (id, value) values (1, 'alpha'), (2, 'beta')`);
-
         assert.equal(await databaseConnection.test(), true);
 
-        const resultSet = await databaseConnection.execute(`select id, value from ${tableName} order by id`);
-        try {
-          assert.equal(resultSet.rowCount, 2);
-          assert.equal(resultSet.value(0, 1), "alpha");
-          assert.equal(resultSet.value(1, 1), "beta");
-        } finally {
-          await resultSet.close();
-        }
+        const typeCoverage = await assertTypeCoverage(databaseConnection, "postgres", tableName);
 
         const missingTable = uniqueIdentifier("missing");
         await assert.rejects(
@@ -227,6 +360,9 @@ async function runPostgresLifecycleTest(target) {
         const tablesResult = await databaseConnection.getTables(null, "public");
         try {
           assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));
+          if (typeCoverage.metadataDatabase !== null) {
+            assert.ok(readResultSetValues(tablesResult, 1).includes(typeCoverage.metadataDatabase));
+          }
         } finally {
           await tablesResult.close();
         }
@@ -266,25 +402,9 @@ async function runStarRocksLifecycleTest(target) {
 
       const databaseConnection = await manager.connect(target.driver, target.dsn(databaseName));
       try {
-        await executeNonQuery(
-          databaseConnection,
-          `create table ${tableName} (` +
-            "id bigint not null, " +
-            "value string not null" +
-          `) duplicate key(id) distributed by hash(id) buckets 1 properties (\"replication_num\" = \"1\")`,
-        );
-        await executeNonQuery(databaseConnection, `insert into ${tableName} (id, value) values (1, 'alpha'), (2, 'beta')`);
-
         assert.equal(await databaseConnection.test(), true);
 
-        const resultSet = await databaseConnection.execute(`select id, value from ${tableName} order by id`);
-        try {
-          assert.equal(resultSet.rowCount, 2);
-          assert.equal(resultSet.value(0, 1), "alpha");
-          assert.equal(resultSet.value(1, 1), "beta");
-        } finally {
-          await resultSet.close();
-        }
+        await assertTypeCoverage(databaseConnection, "starrocks", tableName);
 
         const missingTable = uniqueIdentifier("missing");
         await assert.rejects(

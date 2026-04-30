@@ -18,7 +18,9 @@ TEST_SQL = "select 1 as id, 'alpha' as value union all select 2 as id, 'beta' as
 if str(PYTHON_BINDING_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_BINDING_ROOT))
 
-ConnectionManager = importlib.import_module("database_zig").ConnectionManager
+_binding_module = importlib.import_module("database_zig")
+ConnectionManager = _binding_module.ConnectionManager
+ColumnType = _binding_module.ColumnType
 
 
 @dataclass(frozen=True)
@@ -165,3 +167,162 @@ async def execute_non_query(connection: object, sql: str) -> None:
 
 def read_result_set_values(result_set: object, column_index: int) -> list[str | None]:
     return [result_set.value(row_index, column_index) for row_index in range(result_set.row_count)]
+
+
+def build_type_coverage_case(section: str, table_name: str) -> dict[str, object]:
+    if section == "postgres":
+        return {
+            "metadata_database": "public",
+            "create_table_sql": (
+                f"create table {table_name} ("
+                "id bigint primary key, "
+                "bool_value boolean not null, "
+                "int_value bigint not null, "
+                "float_value double precision not null, "
+                "text_value text not null, "
+                "binary_value bytea not null, "
+                "decimal_value numeric(10, 2) not null, "
+                "timestamp_value timestamp not null, "
+                "json_value jsonb not null"
+                ")"
+            ),
+            "insert_sql": (
+                f"insert into {table_name} ("
+                "id, bool_value, int_value, float_value, text_value, binary_value, decimal_value, timestamp_value, json_value"
+                ") values ("
+                "1, true, 42, 3.5, 'alpha', decode('0102ff', 'hex'), 123.45, timestamp '2024-01-02 03:04:05', '{\"enabled\":true,\"count\":1}'::jsonb"
+                ")"
+            ),
+            "select_sql": (
+                f"select id, bool_value, int_value, float_value, text_value, binary_value, "
+                f"decimal_value, timestamp_value, json_value from {table_name} order by id"
+            ),
+            "expected_columns": [
+                {"name": "id", "column_type": ColumnType.INT64},
+                {"name": "bool_value", "column_type": ColumnType.BOOLEAN},
+                {"name": "int_value", "column_type": ColumnType.INT64},
+                {"name": "float_value", "column_type": ColumnType.FLOAT64},
+                {"name": "text_value", "column_type": ColumnType.TEXT},
+                {"name": "binary_value", "column_type": ColumnType.BINARY},
+                {"name": "decimal_value", "column_type": [ColumnType.DECIMAL, ColumnType.TEXT]},
+                {"name": "timestamp_value", "column_type": ColumnType.TIMESTAMP},
+                {"name": "json_value", "column_type": [ColumnType.JSON, ColumnType.TEXT]},
+            ],
+        }
+
+    if section == "starrocks":
+        return {
+            "metadata_database": None,
+            "create_table_sql": (
+                f"create table {table_name} ("
+                "id bigint not null, "
+                "bool_value boolean not null, "
+                "int_value bigint not null, "
+                "float_value double not null, "
+                "text_value string not null, "
+                "decimal_value decimal(10, 2) not null, "
+                "timestamp_value datetime not null, "
+                "json_value json not null"
+                ") duplicate key(id) distributed by hash(id) buckets 1 "
+                'properties ("replication_num" = "1")'
+            ),
+            "insert_sql": (
+                f"insert into {table_name} ("
+                "id, bool_value, int_value, float_value, text_value, decimal_value, timestamp_value, json_value"
+                ") values ("
+                "1, true, 42, 3.5, 'alpha', 123.45, '2024-01-02 03:04:05', parse_json('{\"enabled\": true, \"count\": 1}')"
+                ")"
+            ),
+            "select_sql": (
+                f"select id, bool_value, int_value, float_value, text_value, "
+                f"decimal_value, timestamp_value, json_value from {table_name} order by id"
+            ),
+            "expected_columns": [
+                {"name": "id", "column_type": ColumnType.INT64},
+                {"name": "bool_value", "column_type": [ColumnType.BOOLEAN, ColumnType.INT64]},
+                {"name": "int_value", "column_type": ColumnType.INT64},
+                {"name": "float_value", "column_type": ColumnType.FLOAT64},
+                {"name": "text_value", "column_type": ColumnType.TEXT},
+                {"name": "decimal_value", "column_type": ColumnType.DECIMAL},
+                {"name": "timestamp_value", "column_type": ColumnType.TIMESTAMP},
+                {"name": "json_value", "column_type": [ColumnType.JSON, ColumnType.TEXT]},
+            ],
+        }
+
+    raise ValueError(f"unsupported type coverage database: {section}")
+
+
+def assert_non_empty_value(value: str | None, label: str) -> None:
+    assert isinstance(value, str), f"{label} should be returned as text"
+    assert value, f"{label} should not be empty"
+
+
+def assert_boolean_value(value: str | None) -> None:
+    assert value in {"true", "false", "1", "0"}, f"unexpected boolean text: {value}"
+
+
+def assert_column_metadata(columns: list[object], expected_columns: list[dict[str, object]]) -> None:
+    assert len(columns) == len(expected_columns)
+    for actual, expected in zip(columns, expected_columns):
+        assert actual.name == expected["name"]
+        expected_types = expected["column_type"]
+        if not isinstance(expected_types, list):
+            expected_types = [expected_types]
+        assert actual.column_type in expected_types
+
+
+def assert_type_coverage_values(section: str, result_set: object) -> None:
+    assert result_set.value(0, 0) == "1"
+    assert_boolean_value(result_set.value(0, 1))
+    assert result_set.value(0, 2) == "42"
+    float_value = result_set.value(0, 3)
+    assert isinstance(float_value, str)
+    assert float_value.startswith("3.5")
+    assert result_set.value(0, 4) == "alpha"
+
+    if section == "postgres":
+        assert result_set.value(0, 5) == "0102ff"
+        assert_non_empty_value(result_set.value(0, 6), "decimal_value")
+        timestamp_value = result_set.value(0, 7)
+        assert isinstance(timestamp_value, str)
+        assert timestamp_value.lstrip("-").isdigit()
+        json_value = result_set.value(0, 8)
+        assert isinstance(json_value, str)
+        assert '"enabled"' in json_value
+        return
+
+    if section == "starrocks":
+        assert_non_empty_value(result_set.value(0, 5), "decimal_value")
+        timestamp_value = result_set.value(0, 6)
+        assert isinstance(timestamp_value, str)
+        assert timestamp_value.lstrip("-").isdigit()
+        json_value = result_set.value(0, 7)
+        assert isinstance(json_value, str)
+        assert '"enabled"' in json_value
+        return
+
+    raise ValueError(f"unsupported type coverage database: {section}")
+
+
+async def assert_type_coverage(connection: object, section: str, table_name: str) -> dict[str, object]:
+    type_coverage = build_type_coverage_case(section, table_name)
+    await execute_non_query(connection, type_coverage["create_table_sql"])
+    await execute_non_query(connection, type_coverage["insert_sql"])
+
+    result_set = await connection.execute_async(type_coverage["select_sql"])
+    try:
+        assert result_set.row_count == 1
+        assert_column_metadata(result_set.columns, type_coverage["expected_columns"])
+        assert_type_coverage_values(section, result_set)
+    finally:
+        await result_set.close_async()
+
+    cursor = await connection.cursor_async(type_coverage["select_sql"])
+    try:
+        assert_column_metadata(cursor.columns, type_coverage["expected_columns"])
+        assert cursor.next() is True
+        assert cursor.next() is False
+    finally:
+        await cursor.close_async()
+
+    return type_coverage

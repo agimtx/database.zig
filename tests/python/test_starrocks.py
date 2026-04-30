@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from _support import ConnectionManager, execute_non_query, load_test_target, read_result_set_values, should_run_section, unique_identifier
+from _support import ConnectionManager, assert_type_coverage, execute_non_query, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
 
 class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
@@ -26,30 +26,9 @@ class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
                 database_connection = await manager.connect_async(target.driver, target.dsn(database_name))
                 try:
-                    await execute_non_query(
-                        database_connection,
-                        (
-                            f"create table {table_name} ("
-                            "id bigint not null, "
-                            "value string not null"
-                            f") duplicate key(id) distributed by hash(id) buckets 1 "
-                            'properties ("replication_num" = "1")'
-                        ),
-                    )
-                    await execute_non_query(
-                        database_connection,
-                        f"insert into {table_name} (id, value) values (1, 'alpha'), (2, 'beta')",
-                    )
-
                     self.assertTrue(await database_connection.test_async())
 
-                    result_set = await database_connection.execute_async(f"select id, value from {table_name} order by id")
-                    try:
-                        self.assertEqual(result_set.row_count, 2)
-                        self.assertEqual(result_set.value(0, 1), "alpha")
-                        self.assertEqual(result_set.value(1, 1), "beta")
-                    finally:
-                        await result_set.close_async()
+                    await assert_type_coverage(database_connection, "starrocks", table_name)
 
                     missing_table = unique_identifier("missing")
                     with self.assertRaisesRegex(RuntimeError, missing_table):
