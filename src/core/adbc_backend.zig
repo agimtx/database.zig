@@ -57,6 +57,8 @@ const AdbcError = extern struct {
     private_driver: ?*anyopaque = null,
 };
 
+threadlocal var last_driver_error_message: ?[]u8 = null;
+
 const AdbcDatabase = extern struct {
     private_data: ?*anyopaque = null,
     private_driver: ?*anyopaque = null,
@@ -1170,6 +1172,7 @@ fn requireOk(status: u8, error_info: *AdbcError) !void {
     }
 
     if (error_info.message) |message| {
+        setLastDriverErrorMessage(std.mem.span(message));
         std.log.err("ADBC status={d} message={s}", .{ status, std.mem.span(message) });
     } else {
         std.log.err("ADBC status={d}", .{status});
@@ -1180,6 +1183,27 @@ fn requireOk(status: u8, error_info: *AdbcError) !void {
     }
 
     return Error.DriverLoadFailed;
+}
+
+pub fn clearLastDriverErrorMessage() void {
+    if (last_driver_error_message) |message| {
+        std.heap.page_allocator.free(message);
+        last_driver_error_message = null;
+    }
+}
+
+pub fn takeLastDriverErrorMessage(allocator: std.mem.Allocator) ?[]u8 {
+    const message = last_driver_error_message orelse return null;
+    defer {
+        std.heap.page_allocator.free(message);
+        last_driver_error_message = null;
+    }
+    return allocator.dupe(u8, message) catch null;
+}
+
+fn setLastDriverErrorMessage(message: []const u8) void {
+    clearLastDriverErrorMessage();
+    last_driver_error_message = std.heap.page_allocator.dupe(u8, message) catch null;
 }
 
 fn releaseError(error_info: *AdbcError) void {

@@ -112,6 +112,13 @@ export fn dbz_operation_await(
     return ffi.dbz_operation_await(raw_manager, operation_id, out_result);
 }
 
+export fn dbz_last_error_message(
+    raw_manager: ?*anyopaque,
+    out_message: ?*ffi.DbzErrorMessage,
+) i32 {
+    return ffi.dbz_last_error_message(raw_manager, out_message);
+}
+
 export fn dbz_cursor_next(raw_manager: ?*anyopaque, cursor_id: u64, out_has_row: ?*u8) i32 {
     return ffi.dbz_cursor_next(raw_manager, cursor_id, out_has_row);
 }

@@ -167,9 +167,18 @@ function readResultSetValues(resultSet, columnIndex) {
 async function runPostgresLifecycleTest(target) {
   const databaseName = uniqueIdentifier("dbz_pg");
   const tableName = uniqueIdentifier("records");
+  const missingDatabase = uniqueIdentifier("missing_db");
   const manager = new bindingModule.ConnectionManager();
 
   try {
+    await assert.rejects(
+      manager.connect(target.driver, target.dsn(missingDatabase)),
+      (error) => {
+        assert.match(error.message, new RegExp(missingDatabase));
+        return true;
+      },
+    );
+
     const adminConnection = await manager.connect(target.driver, target.dsn());
     try {
       await executeNonQuery(adminConnection, `create database ${databaseName}`);
@@ -189,6 +198,24 @@ async function runPostgresLifecycleTest(target) {
         } finally {
           await resultSet.close();
         }
+
+        const missingTable = uniqueIdentifier("missing");
+        await assert.rejects(
+          databaseConnection.execute(`select * from ${missingTable}`),
+          (error) => {
+            assert.match(error.message, new RegExp(missingTable));
+            return true;
+          },
+        );
+
+        const missingColumn = uniqueIdentifier("missing_column");
+        await assert.rejects(
+          databaseConnection.execute(`select ${missingColumn} from ${tableName}`),
+          (error) => {
+            assert.match(error.message, new RegExp(missingColumn));
+            return true;
+          },
+        );
 
         const databasesResult = await databaseConnection.getDatabases();
         try {
@@ -221,9 +248,18 @@ async function runPostgresLifecycleTest(target) {
 async function runStarRocksLifecycleTest(target) {
   const databaseName = uniqueIdentifier("dbz_sr");
   const tableName = uniqueIdentifier("records");
+  const missingDatabase = uniqueIdentifier("missing_db");
   const manager = new bindingModule.ConnectionManager();
 
   try {
+    await assert.rejects(
+      manager.connect(target.driver, target.dsn(missingDatabase)),
+      (error) => {
+        assert.match(error.message, new RegExp(missingDatabase));
+        return true;
+      },
+    );
+
     const adminConnection = await manager.connect(target.driver, target.dsn());
     try {
       await executeNonQuery(adminConnection, `create database if not exists ${databaseName}`);
@@ -249,6 +285,24 @@ async function runStarRocksLifecycleTest(target) {
         } finally {
           await resultSet.close();
         }
+
+        const missingTable = uniqueIdentifier("missing");
+        await assert.rejects(
+          databaseConnection.execute(`select * from ${missingTable}`),
+          (error) => {
+            assert.match(error.message, new RegExp(missingTable));
+            return true;
+          },
+        );
+
+        const missingColumn = uniqueIdentifier("missing_column");
+        await assert.rejects(
+          databaseConnection.execute(`select ${missingColumn} from ${tableName}`),
+          (error) => {
+            assert.match(error.message, new RegExp(missingColumn));
+            return true;
+          },
+        );
 
         const databasesResult = await databaseConnection.getDatabases();
         try {

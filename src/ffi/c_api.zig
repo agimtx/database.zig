@@ -1,5 +1,6 @@
 const std = @import("std");
 const root = @import("../root.zig");
+const adbc_backend = @import("../core/adbc_backend.zig");
 
 pub const module_anchor = true;
 
@@ -38,6 +39,11 @@ pub const DbzOperationResult = extern struct {
     state: u8,
     status: i32,
     value: u64,
+};
+
+pub const DbzErrorMessage = extern struct {
+    message_ptr: ?[*]const u8,
+    message_len: usize,
 };
 
 const ffi_allocator = std.heap.page_allocator;
@@ -85,6 +91,37 @@ fn fillResultCell(out_cell: *DbzResultCell, cell: root.ResultCell) void {
     };
 }
 
+fn defaultStatusMessage(status: i32) []const u8 {
+    return switch (status) {
+        dbz_invalid_argument => "invalid argument",
+        dbz_driver_not_registered => "driver not registered",
+        dbz_connection_not_found => "connection not found",
+        dbz_result_set_not_found => "result set not found",
+        dbz_cursor_not_found => "cursor not found",
+        dbz_column_index_out_of_bounds => "column index out of bounds",
+        dbz_row_index_out_of_bounds => "row index out of bounds",
+        dbz_operation_not_found => "operation not found",
+        else => "internal error",
+    };
+}
+
+fn clearManagerError(manager: ?*root.ConnectionManager) void {
+    if (manager) |typed_manager| {
+        typed_manager.clearLastError();
+    }
+}
+
+fn setManagerError(manager: *root.ConnectionManager, err: anyerror) void {
+    if (adbc_backend.takeLastDriverErrorMessage(ffi_allocator)) |message| {
+        manager.setLastErrorOwned(message) catch {
+            ffi_allocator.free(message);
+        };
+        return;
+    }
+
+    manager.setLastErrorCopy(defaultStatusMessage(mapError(err))) catch {};
+}
+
 pub fn dbz_manager_create() ?*anyopaque {
     const manager = ffi_allocator.create(root.ConnectionManager) catch return null;
     manager.* = root.ConnectionManager.init(ffi_allocator) catch {
@@ -102,26 +139,35 @@ pub fn dbz_manager_destroy(raw_manager: ?*anyopaque) void {
 
 pub fn dbz_connection_open(raw_manager: ?*anyopaque, driver_kind: i32, dsn: ?[*:0]const u8) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
     const kind = driverFromInt(driver_kind) orelse return 0;
     const dsn_value = dsn orelse return 0;
+    adbc_backend.clearLastDriverErrorMessage();
 
     const handle = manager.open(.{
         .driver = kind,
         .dsn = std.mem.span(dsn_value),
-    }) catch return 0;
+    }) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
 
     return handle.id;
 }
 
 pub fn dbz_connection_open_async(raw_manager: ?*anyopaque, driver_kind: i32, dsn: ?[*:0]const u8) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
     const kind = driverFromInt(driver_kind) orelse return 0;
     const dsn_value = dsn orelse return 0;
 
     return manager.openAsync(.{
         .driver = kind,
         .dsn = std.mem.span(dsn_value),
-    }) catch return 0;
+    }) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
 }
 
 pub fn dbz_manager_open(raw_manager: ?*anyopaque, driver_kind: i32, dsn: ?[*:0]const u8) u64 {
@@ -134,8 +180,10 @@ pub fn dbz_manager_open_async(raw_manager: ?*anyopaque, driver_kind: i32, dsn: ?
 
 pub fn dbz_connection_close(raw_manager: ?*anyopaque, connection_id: u64) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
 
     manager.close(connection_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -148,24 +196,35 @@ pub fn dbz_manager_close(raw_manager: ?*anyopaque, connection_id: u64) i32 {
 
 pub fn dbz_connection_execute(raw_manager: ?*anyopaque, connection_id: u64, sql: ?[*:0]const u8) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
     const sql_value = sql orelse return 0;
+    adbc_backend.clearLastDriverErrorMessage();
 
-    const result_set = manager.execute(connection_id, std.mem.span(sql_value)) catch return 0;
+    const result_set = manager.execute(connection_id, std.mem.span(sql_value)) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
     return result_set.id;
 }
 
 pub fn dbz_connection_execute_async(raw_manager: ?*anyopaque, connection_id: u64, sql: ?[*:0]const u8) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
     const sql_value = sql orelse return 0;
 
-    return manager.executeAsync(connection_id, std.mem.span(sql_value)) catch return 0;
+    return manager.executeAsync(connection_id, std.mem.span(sql_value)) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
 }
 
 pub fn dbz_connection_test(raw_manager: ?*anyopaque, connection_id: u64, out_ok: ?*u8) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const ok = out_ok orelse return dbz_invalid_argument;
 
     ok.* = if (manager.testConnection(connection_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     }) 1 else 0;
 
@@ -179,18 +238,26 @@ pub fn dbz_connection_get_tables(
     database: ?[*:0]const u8,
 ) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
 
     const result_set = manager.getTables(connection_id, .{
         .catalog = if (catalog) |value| std.mem.span(value) else null,
         .database = if (database) |value| std.mem.span(value) else null,
-    }) catch return 0;
+    }) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
     return result_set.id;
 }
 
 pub fn dbz_connection_get_databases(raw_manager: ?*anyopaque, connection_id: u64) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
 
-    const result_set = manager.getDatabases(connection_id) catch return 0;
+    const result_set = manager.getDatabases(connection_id) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
     return result_set.id;
 }
 
@@ -200,8 +267,10 @@ pub fn dbz_connection_get_database(raw_manager: ?*anyopaque, connection_id: u64)
 
 pub fn dbz_result_set_close(raw_manager: ?*anyopaque, result_set_id: u64) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
 
     manager.closeResultSet(result_set_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -214,9 +283,11 @@ pub fn dbz_result_set_row_count(
     out_row_count: ?*u64,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const row_count = out_row_count orelse return dbz_invalid_argument;
 
     row_count.* = manager.resultSetRowCount(result_set_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -229,9 +300,11 @@ pub fn dbz_result_set_affected_rows(
     out_affected_rows: ?*u64,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const affected_rows = out_affected_rows orelse return dbz_invalid_argument;
 
     affected_rows.* = manager.resultSetAffectedRows(result_set_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -244,9 +317,11 @@ pub fn dbz_result_set_column_count(
     out_column_count: ?*usize,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const column_count = out_column_count orelse return dbz_invalid_argument;
 
     column_count.* = manager.resultSetColumnCount(result_set_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -260,9 +335,11 @@ pub fn dbz_result_set_column_metadata(
     out_metadata: ?*DbzColumnMetadata,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const metadata_out = out_metadata orelse return dbz_invalid_argument;
 
     const metadata = manager.resultSetColumn(result_set_id, column_index) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
     fillColumnMetadata(metadata_out, metadata);
@@ -278,9 +355,11 @@ pub fn dbz_result_set_value(
     out_cell: ?*DbzResultCell,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const cell_out = out_cell orelse return dbz_invalid_argument;
 
     const cell = manager.resultSetCell(result_set_id, row_index, column_index) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
     fillResultCell(cell_out, cell);
@@ -290,17 +369,26 @@ pub fn dbz_result_set_value(
 
 pub fn dbz_cursor_open(raw_manager: ?*anyopaque, connection_id: u64, sql: ?[*:0]const u8) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
     const sql_value = sql orelse return 0;
+    adbc_backend.clearLastDriverErrorMessage();
 
-    const cursor = manager.openCursor(connection_id, std.mem.span(sql_value)) catch return 0;
+    const cursor = manager.openCursor(connection_id, std.mem.span(sql_value)) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
     return cursor.id;
 }
 
 pub fn dbz_cursor_open_async(raw_manager: ?*anyopaque, connection_id: u64, sql: ?[*:0]const u8) u64 {
     const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
     const sql_value = sql orelse return 0;
 
-    return manager.openCursorAsync(connection_id, std.mem.span(sql_value)) catch return 0;
+    return manager.openCursorAsync(connection_id, std.mem.span(sql_value)) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
 }
 
 pub fn dbz_operation_await(
@@ -309,9 +397,11 @@ pub fn dbz_operation_await(
     out_result: ?*DbzOperationResult,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const result_out = out_result orelse return dbz_invalid_argument;
 
     const result = manager.awaitOperation(operation_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -331,9 +421,11 @@ pub fn dbz_operation_await(
 
 pub fn dbz_cursor_next(raw_manager: ?*anyopaque, cursor_id: u64, out_has_row: ?*u8) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const has_row = out_has_row orelse return dbz_invalid_argument;
 
     has_row.* = if (manager.fetchNext(cursor_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     }) 1 else 0;
 
@@ -342,8 +434,10 @@ pub fn dbz_cursor_next(raw_manager: ?*anyopaque, cursor_id: u64, out_has_row: ?*
 
 pub fn dbz_cursor_close(raw_manager: ?*anyopaque, cursor_id: u64) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
 
     manager.closeCursor(cursor_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -356,9 +450,11 @@ pub fn dbz_cursor_column_count(
     out_column_count: ?*usize,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const column_count = out_column_count orelse return dbz_invalid_argument;
 
     column_count.* = manager.cursorColumnCount(cursor_id) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
 
@@ -372,12 +468,36 @@ pub fn dbz_cursor_column_metadata(
     out_metadata: ?*DbzColumnMetadata,
 ) i32 {
     const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    clearManagerError(manager);
     const metadata_out = out_metadata orelse return dbz_invalid_argument;
 
     const metadata = manager.cursorColumn(cursor_id, column_index) catch |err| {
+        setManagerError(manager, err);
         return mapError(err);
     };
     fillColumnMetadata(metadata_out, metadata);
+
+    return dbz_ok;
+}
+
+pub fn dbz_last_error_message(
+    raw_manager: ?*anyopaque,
+    out_message: ?*DbzErrorMessage,
+) i32 {
+    const manager = castManager(raw_manager) orelse return dbz_invalid_argument;
+    const error_out = out_message orelse return dbz_invalid_argument;
+
+    if (manager.lastErrorMessage()) |message| {
+        error_out.* = .{
+            .message_ptr = message.ptr,
+            .message_len = message.len,
+        };
+    } else {
+        error_out.* = .{
+            .message_ptr = null,
+            .message_len = 0,
+        };
+    }
 
     return dbz_ok;
 }

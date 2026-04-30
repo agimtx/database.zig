@@ -97,6 +97,18 @@ function readResultCell(buffer) {
   return textBuffer.toString("utf8");
 }
 
+function readErrorMessage(buffer) {
+  const messageLength = SIZE_T_SIZE === 8
+    ? Number(buffer.readBigUInt64LE(POINTER_SIZE))
+    : buffer.readUInt32LE(POINTER_SIZE);
+  if (messageLength === 0) {
+    return null;
+  }
+
+  const messageBuffer = ref.readPointer(buffer, 0, messageLength);
+  return messageBuffer.toString("utf8");
+}
+
 function readColumnMetadata(buffer) {
   const nameLength = SIZE_T_SIZE === 8
     ? Number(buffer.readBigUInt64LE(POINTER_SIZE))
@@ -163,6 +175,7 @@ class ConnectionManager {
       dbz_manager_open_async: ["uint64", ["pointer", "int32", "string"]],
       dbz_manager_close: ["int32", ["pointer", "uint64"]],
       dbz_operation_await: ["int32", ["pointer", "uint64", "pointer"]],
+      dbz_last_error_message: ["int32", ["pointer", "pointer"]],
     });
 
     this.manager = this.lib.dbz_manager_create();
@@ -179,7 +192,7 @@ class ConnectionManager {
 
     const connectionId = this.lib.dbz_connection_open(this.manager, driverKind, dsn);
     if (connectionId === 0 || connectionId === 0n) {
-      throw new Error("dbz_connection_open returned 0");
+      this._throwZeroResult("dbz_connection_open");
     }
 
     return new Connection(this, Number(connectionId), driver, dsn);
@@ -193,7 +206,7 @@ class ConnectionManager {
 
     const operationId = this.lib.dbz_connection_open_async(this.manager, driverKind, dsn);
     if (operationId === 0 || operationId === 0n) {
-      throw new Error("dbz_connection_open_async returned 0");
+      this._throwZeroResult("dbz_connection_open_async");
     }
 
     const connectionId = await this._awaitOperationValue(Number(operationId), "dbz_connection_open_async");
@@ -209,12 +222,12 @@ class ConnectionManager {
   }
 
   closeConnectionSync(connectionId) {
-    raiseOnStatus(this.lib.dbz_connection_close(this.manager, connectionId), "dbz_connection_close");
+    this._raiseOnStatus(this.lib.dbz_connection_close(this.manager, connectionId), "dbz_connection_close");
   }
 
   async closeConnection(connectionId) {
     const status = await callAsync(this.lib.dbz_connection_close, [this.manager, connectionId]);
-    raiseOnStatus(status, "dbz_connection_close");
+    this._raiseOnStatus(status, "dbz_connection_close");
   }
 
   disposeSync() {
@@ -231,7 +244,7 @@ class ConnectionManager {
   _executeSync(connectionId, sql) {
     const resultSetId = this.lib.dbz_connection_execute(this.manager, connectionId, sql);
     if (resultSetId === 0 || resultSetId === 0n) {
-      throw new Error("dbz_connection_execute returned 0");
+      this._throwZeroResult("dbz_connection_execute");
     }
 
     return new ResultSet(this, Number(resultSetId));
@@ -240,7 +253,7 @@ class ConnectionManager {
   async _execute(connectionId, sql) {
     const operationId = this.lib.dbz_connection_execute_async(this.manager, connectionId, sql);
     if (operationId === 0 || operationId === 0n) {
-      throw new Error("dbz_connection_execute_async returned 0");
+      this._throwZeroResult("dbz_connection_execute_async");
     }
 
     const resultSetId = await this._awaitOperationValue(Number(operationId), "dbz_connection_execute_async");
@@ -249,21 +262,21 @@ class ConnectionManager {
 
   _connectionTestSync(connectionId) {
     const out = Buffer.alloc(1);
-    raiseOnStatus(this.lib.dbz_connection_test(this.manager, connectionId, out), "dbz_connection_test");
+    this._raiseOnStatus(this.lib.dbz_connection_test(this.manager, connectionId, out), "dbz_connection_test");
     return out.readUInt8(0) === 1;
   }
 
   async _connectionTest(connectionId) {
     const out = Buffer.alloc(1);
     const status = await callAsync(this.lib.dbz_connection_test, [this.manager, connectionId, out]);
-    raiseOnStatus(status, "dbz_connection_test");
+    this._raiseOnStatus(status, "dbz_connection_test");
     return out.readUInt8(0) === 1;
   }
 
   _getDatabasesSync(connectionId) {
     const resultSetId = this.lib.dbz_connection_get_databases(this.manager, connectionId);
     if (resultSetId === 0 || resultSetId === 0n) {
-      throw new Error("dbz_connection_get_databases returned 0");
+      this._throwZeroResult("dbz_connection_get_databases");
     }
 
     return new ResultSet(this, Number(resultSetId));
@@ -272,7 +285,7 @@ class ConnectionManager {
   async _getDatabases(connectionId) {
     const resultSetId = await callAsync(this.lib.dbz_connection_get_databases, [this.manager, connectionId]);
     if (resultSetId === 0 || resultSetId === 0n) {
-      throw new Error("dbz_connection_get_databases returned 0");
+      this._throwZeroResult("dbz_connection_get_databases");
     }
 
     return new ResultSet(this, Number(resultSetId));
@@ -281,7 +294,7 @@ class ConnectionManager {
   _getTablesSync(connectionId, catalog, database) {
     const resultSetId = this.lib.dbz_connection_get_tables(this.manager, connectionId, catalog ?? null, database ?? null);
     if (resultSetId === 0 || resultSetId === 0n) {
-      throw new Error("dbz_connection_get_tables returned 0");
+      this._throwZeroResult("dbz_connection_get_tables");
     }
 
     return new ResultSet(this, Number(resultSetId));
@@ -290,42 +303,42 @@ class ConnectionManager {
   async _getTables(connectionId, catalog, database) {
     const resultSetId = await callAsync(this.lib.dbz_connection_get_tables, [this.manager, connectionId, catalog ?? null, database ?? null]);
     if (resultSetId === 0 || resultSetId === 0n) {
-      throw new Error("dbz_connection_get_tables returned 0");
+      this._throwZeroResult("dbz_connection_get_tables");
     }
 
     return new ResultSet(this, Number(resultSetId));
   }
 
   _resultSetClose(resultSetId) {
-    raiseOnStatus(this.lib.dbz_result_set_close(this.manager, resultSetId), "dbz_result_set_close");
+    this._raiseOnStatus(this.lib.dbz_result_set_close(this.manager, resultSetId), "dbz_result_set_close");
   }
 
   async _resultSetCloseAsync(resultSetId) {
     const status = await callAsync(this.lib.dbz_result_set_close, [this.manager, resultSetId]);
-    raiseOnStatus(status, "dbz_result_set_close");
+    this._raiseOnStatus(status, "dbz_result_set_close");
   }
 
   _resultSetRowCount(resultSetId) {
     const out = Buffer.alloc(8);
-    raiseOnStatus(this.lib.dbz_result_set_row_count(this.manager, resultSetId, out), "dbz_result_set_row_count");
+    this._raiseOnStatus(this.lib.dbz_result_set_row_count(this.manager, resultSetId, out), "dbz_result_set_row_count");
     return readUInt64(out);
   }
 
   _resultSetAffectedRows(resultSetId) {
     const out = Buffer.alloc(8);
-    raiseOnStatus(this.lib.dbz_result_set_affected_rows(this.manager, resultSetId, out), "dbz_result_set_affected_rows");
+    this._raiseOnStatus(this.lib.dbz_result_set_affected_rows(this.manager, resultSetId, out), "dbz_result_set_affected_rows");
     return readUInt64(out);
   }
 
   _resultSetColumns(resultSetId) {
     const countBuffer = Buffer.alloc(SIZE_T_SIZE);
-    raiseOnStatus(this.lib.dbz_result_set_column_count(this.manager, resultSetId, countBuffer), "dbz_result_set_column_count");
+    this._raiseOnStatus(this.lib.dbz_result_set_column_count(this.manager, resultSetId, countBuffer), "dbz_result_set_column_count");
     const count = readSizeT(countBuffer);
     const columns = [];
 
     for (let index = 0; index < count; index += 1) {
       const metadataBuffer = Buffer.alloc(COLUMN_METADATA_SIZE);
-      raiseOnStatus(
+      this._raiseOnStatus(
         this.lib.dbz_result_set_column_metadata(this.manager, resultSetId, index, metadataBuffer),
         "dbz_result_set_column_metadata",
       );
@@ -337,7 +350,7 @@ class ConnectionManager {
 
   _resultSetValue(resultSetId, rowIndex, columnIndex) {
     const cellBuffer = Buffer.alloc(RESULT_CELL_SIZE);
-    raiseOnStatus(
+    this._raiseOnStatus(
       this.lib.dbz_result_set_value(this.manager, resultSetId, rowIndex, columnIndex, cellBuffer),
       "dbz_result_set_value",
     );
@@ -347,7 +360,7 @@ class ConnectionManager {
   _openCursorSync(connectionId, sql) {
     const cursorId = this.lib.dbz_cursor_open(this.manager, connectionId, sql);
     if (cursorId === 0 || cursorId === 0n) {
-      throw new Error("dbz_cursor_open returned 0");
+      this._throwZeroResult("dbz_cursor_open");
     }
 
     return new Cursor(this, Number(cursorId));
@@ -356,7 +369,7 @@ class ConnectionManager {
   async _openCursor(connectionId, sql) {
     const operationId = this.lib.dbz_cursor_open_async(this.manager, connectionId, sql);
     if (operationId === 0 || operationId === 0n) {
-      throw new Error("dbz_cursor_open_async returned 0");
+      this._throwZeroResult("dbz_cursor_open_async");
     }
 
     const cursorId = await this._awaitOperationValue(Number(operationId), "dbz_cursor_open_async");
@@ -365,28 +378,28 @@ class ConnectionManager {
 
   _cursorNext(cursorId) {
     const out = Buffer.alloc(1);
-    raiseOnStatus(this.lib.dbz_cursor_next(this.manager, cursorId, out), "dbz_cursor_next");
+    this._raiseOnStatus(this.lib.dbz_cursor_next(this.manager, cursorId, out), "dbz_cursor_next");
     return out.readUInt8(0) === 1;
   }
 
   _cursorClose(cursorId) {
-    raiseOnStatus(this.lib.dbz_cursor_close(this.manager, cursorId), "dbz_cursor_close");
+    this._raiseOnStatus(this.lib.dbz_cursor_close(this.manager, cursorId), "dbz_cursor_close");
   }
 
   async _cursorCloseAsync(cursorId) {
     const status = await callAsync(this.lib.dbz_cursor_close, [this.manager, cursorId]);
-    raiseOnStatus(status, "dbz_cursor_close");
+    this._raiseOnStatus(status, "dbz_cursor_close");
   }
 
   _cursorColumns(cursorId) {
     const countBuffer = Buffer.alloc(SIZE_T_SIZE);
-    raiseOnStatus(this.lib.dbz_cursor_column_count(this.manager, cursorId, countBuffer), "dbz_cursor_column_count");
+    this._raiseOnStatus(this.lib.dbz_cursor_column_count(this.manager, cursorId, countBuffer), "dbz_cursor_column_count");
     const count = readSizeT(countBuffer);
     const columns = [];
 
     for (let index = 0; index < count; index += 1) {
       const metadataBuffer = Buffer.alloc(COLUMN_METADATA_SIZE);
-      raiseOnStatus(
+      this._raiseOnStatus(
         this.lib.dbz_cursor_column_metadata(this.manager, cursorId, index, metadataBuffer),
         "dbz_cursor_column_metadata",
       );
@@ -399,15 +412,47 @@ class ConnectionManager {
   async _awaitOperationValue(operationId, operation) {
     const resultBuffer = Buffer.alloc(OPERATION_RESULT_SIZE);
     const awaitStatus = await callAsync(this.lib.dbz_operation_await, [this.manager, operationId, resultBuffer]);
-    raiseOnStatus(awaitStatus, "dbz_operation_await");
+    this._raiseOnStatus(awaitStatus, "dbz_operation_await");
 
     const result = readOperationResult(resultBuffer);
-    raiseOnStatus(result.status, operation);
+    this._raiseOnStatus(result.status, operation);
     if (result.value === 0) {
-      throw new Error(`${operation} returned 0`);
+      this._throwZeroResult(operation);
     }
 
     return result.value;
+  }
+
+  _lastErrorMessage() {
+    const errorBuffer = Buffer.alloc(alignStructSize(POINTER_SIZE + SIZE_T_SIZE));
+    const status = this.lib.dbz_last_error_message(this.manager, errorBuffer);
+    if (status !== 0) {
+      return null;
+    }
+
+    return readErrorMessage(errorBuffer);
+  }
+
+  _raiseOnStatus(status, operation) {
+    if (status === 0) {
+      return;
+    }
+
+    const rawMessage = this._lastErrorMessage();
+    if (rawMessage) {
+      throw new Error(`${operation} failed: ${rawMessage}`);
+    }
+
+    raiseOnStatus(status, operation);
+  }
+
+  _throwZeroResult(operation) {
+    const rawMessage = this._lastErrorMessage();
+    if (rawMessage) {
+      throw new Error(`${operation} failed: ${rawMessage}`);
+    }
+
+    throw new Error(`${operation} returned 0`);
   }
 }
 

@@ -68,6 +68,13 @@ class _CResultCell(ctypes.Structure):
     ]
 
 
+class _CErrorMessage(ctypes.Structure):
+    _fields_ = [
+        ("message_ptr", ctypes.c_void_p),
+        ("message_len", ctypes.c_size_t),
+    ]
+
+
 @dataclass(frozen=True)
 class ColumnMetadata:
     name: str
@@ -182,7 +189,7 @@ class ConnectionManager:
 
         handle = self._lib.dbz_connection_open(self._manager, driver_kind, dsn.encode("utf-8"))
         if handle == 0:
-            raise RuntimeError("dbz_connection_open returned 0")
+            self._raise_on_zero_result("dbz_connection_open")
 
         return Connection(self, int(handle), driver, dsn)
 
@@ -193,7 +200,7 @@ class ConnectionManager:
 
         operation_id = self._lib.dbz_connection_open_async(self._manager, driver_kind, dsn.encode("utf-8"))
         if operation_id == 0:
-            raise RuntimeError("dbz_connection_open_async returned 0")
+            self._raise_on_zero_result("dbz_connection_open_async")
 
         handle = await self._await_operation_value(operation_id, "dbz_connection_open_async")
         return Connection(self, handle, driver, dsn)
@@ -285,17 +292,19 @@ class ConnectionManager:
         self._lib.dbz_manager_close.restype = ctypes.c_int32
         self._lib.dbz_operation_await.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(_COperationResult)]
         self._lib.dbz_operation_await.restype = ctypes.c_int32
+        self._lib.dbz_last_error_message.argtypes = [ctypes.c_void_p, ctypes.POINTER(_CErrorMessage)]
+        self._lib.dbz_last_error_message.restype = ctypes.c_int32
 
     def _execute(self, connection_id: int, sql: str) -> ResultSet:
         result_set_id = self._lib.dbz_connection_execute(self._manager, connection_id, sql.encode("utf-8"))
         if result_set_id == 0:
-            raise RuntimeError("dbz_connection_execute returned 0")
+            self._raise_on_zero_result("dbz_connection_execute")
         return ResultSet(self, int(result_set_id))
 
     async def _execute_async(self, connection_id: int, sql: str) -> ResultSet:
         operation_id = self._lib.dbz_connection_execute_async(self._manager, connection_id, sql.encode("utf-8"))
         if operation_id == 0:
-            raise RuntimeError("dbz_connection_execute_async returned 0")
+            self._raise_on_zero_result("dbz_connection_execute_async")
 
         result_set_id = await self._await_operation_value(operation_id, "dbz_connection_execute_async")
         return ResultSet(self, result_set_id)
@@ -314,7 +323,7 @@ class ConnectionManager:
     def _get_databases(self, connection_id: int) -> ResultSet:
         result_set_id = self._lib.dbz_connection_get_databases(self._manager, connection_id)
         if result_set_id == 0:
-            raise RuntimeError("dbz_connection_get_databases returned 0")
+            self._raise_on_zero_result("dbz_connection_get_databases")
         return ResultSet(self, int(result_set_id))
 
     async def _get_databases_async(self, connection_id: int) -> ResultSet:
@@ -328,7 +337,7 @@ class ConnectionManager:
             database.encode("utf-8") if database is not None else None,
         )
         if result_set_id == 0:
-            raise RuntimeError("dbz_connection_get_tables returned 0")
+            self._raise_on_zero_result("dbz_connection_get_tables")
         return ResultSet(self, int(result_set_id))
 
     async def _get_tables_async(self, connection_id: int, catalog: str | None, database: str | None) -> ResultSet:
@@ -382,13 +391,13 @@ class ConnectionManager:
     def _open_cursor(self, connection_id: int, sql: str) -> Cursor:
         cursor_id = self._lib.dbz_cursor_open(self._manager, connection_id, sql.encode("utf-8"))
         if cursor_id == 0:
-            raise RuntimeError("dbz_cursor_open returned 0")
+            self._raise_on_zero_result("dbz_cursor_open")
         return Cursor(self, int(cursor_id))
 
     async def _open_cursor_async(self, connection_id: int, sql: str) -> Cursor:
         operation_id = self._lib.dbz_cursor_open_async(self._manager, connection_id, sql.encode("utf-8"))
         if operation_id == 0:
-            raise RuntimeError("dbz_cursor_open_async returned 0")
+            self._raise_on_zero_result("dbz_cursor_open_async")
 
         cursor_id = await self._await_operation_value(operation_id, "dbz_cursor_open_async")
         return Cursor(self, cursor_id)
@@ -405,7 +414,7 @@ class ConnectionManager:
         result = await asyncio.to_thread(self._await_operation, operation_id)
         self._raise_on_status(result.status, operation)
         if result.value == 0:
-            raise RuntimeError(f"{operation} returned 0")
+            self._raise_on_zero_result(operation)
         return int(result.value)
 
     def _cursor_next(self, cursor_id: int) -> bool:
@@ -447,8 +456,24 @@ class ConnectionManager:
     def _raise_on_status(self, status: int, operation: str) -> None:
         if status == 0:
             return
+        raw_message = self._last_error_message()
+        if raw_message:
+            raise RuntimeError(f"{operation} failed: {raw_message}")
         message = _STATUS_MESSAGES.get(status, f"unknown status={status}")
         raise RuntimeError(f"{operation} failed: {message}")
+
+    def _raise_on_zero_result(self, operation: str) -> None:
+        raw_message = self._last_error_message()
+        if raw_message:
+            raise RuntimeError(f"{operation} failed: {raw_message}")
+        raise RuntimeError(f"{operation} returned 0")
+
+    def _last_error_message(self) -> str | None:
+        raw_error = _CErrorMessage()
+        status = self._lib.dbz_last_error_message(self._manager, ctypes.byref(raw_error))
+        if status != 0 or not raw_error.message_ptr or raw_error.message_len == 0:
+            return None
+        return ctypes.string_at(raw_error.message_ptr, raw_error.message_len).decode("utf-8")
 
     def _resolve_library_path(self, library_path: str | None) -> Path:
         if library_path:

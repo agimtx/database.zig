@@ -14,8 +14,12 @@ class PostgresBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
         target = load_test_target(section)
         database_name = unique_identifier("dbz_pg")
         table_name = unique_identifier("records")
+        missing_database = unique_identifier("missing_db")
 
         async with ConnectionManager() as manager:
+            with self.assertRaisesRegex(RuntimeError, missing_database):
+                await manager.connect_async(target.driver, target.dsn(missing_database))
+
             admin_connection = await manager.connect_async(target.driver, target.dsn())
             try:
                 await execute_non_query(admin_connection, f"create database {database_name}")
@@ -40,6 +44,14 @@ class PostgresBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(result_set.value(1, 1), "beta")
                     finally:
                         await result_set.close_async()
+
+                    missing_table = unique_identifier("missing")
+                    with self.assertRaisesRegex(RuntimeError, missing_table):
+                        await database_connection.execute_async(f"select * from {missing_table}")
+
+                    missing_column = unique_identifier("missing_column")
+                    with self.assertRaisesRegex(RuntimeError, missing_column):
+                        await database_connection.execute_async(f"select {missing_column} from {table_name}")
 
                     databases_result = await database_connection.get_databases_async()
                     try:

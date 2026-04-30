@@ -62,6 +62,11 @@ struct dbz_operation_result {
     uint64_t value;
 };
 
+struct dbz_error_message {
+    const uint8_t *message_ptr;
+    uintptr_t message_len;
+};
+
 void *dbz_manager_create(void);
 void dbz_manager_destroy(void *manager);
 uint64_t dbz_connection_open(void *manager, int32_t driver_kind, const char *dsn);
@@ -89,6 +94,7 @@ uint64_t dbz_manager_open(void *manager, int32_t driver_kind, const char *dsn);
 uint64_t dbz_manager_open_async(void *manager, int32_t driver_kind, const char *dsn);
 int32_t dbz_manager_close(void *manager, uint64_t connection_id);
 int32_t dbz_operation_await(void *manager, uint64_t operation_id, struct dbz_operation_result *out_result);
+int32_t dbz_last_error_message(void *manager, struct dbz_error_message *out_message);
 
 #ifdef __cplusplus
 }

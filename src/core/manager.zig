@@ -59,6 +59,7 @@ const AsyncOperation = struct {
     state: AsyncOperationState = .pending,
     value: u64 = 0,
     failure: ?anyerror = null,
+    failure_message: ?[]u8 = null,
     thread: ?std.Thread = null,
 
     fn begin(self: *AsyncOperation) void {
@@ -77,13 +78,14 @@ const AsyncOperation = struct {
         self.condition.broadcast();
     }
 
-    fn fail(self: *AsyncOperation, err: anyerror) void {
+    fn fail(self: *AsyncOperation, err: anyerror, message: ?[]u8) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         self.state = .failed;
         self.value = 0;
         self.failure = err;
+        self.failure_message = message;
         self.condition.broadcast();
     }
 
@@ -115,6 +117,9 @@ const AsyncOperation = struct {
             .execute => |payload| allocator.free(payload.sql),
             .open_cursor => |payload| allocator.free(payload.sql),
         }
+        if (self.failure_message) |message| {
+            allocator.free(message);
+        }
     }
 };
 
@@ -140,6 +145,7 @@ pub const ConnectionManager = struct {
     result_sets: std.AutoHashMap(u64, ResultSetEntry),
     cursors: std.AutoHashMap(u64, CursorEntry),
     operations: std.AutoHashMap(u64, *AsyncOperation),
+    last_error_message: ?[]u8 = null,
     state_lock: std.Thread.Mutex = .{},
     next_connection_id: u64 = 1,
     next_result_set_id: u64 = 1,
@@ -194,6 +200,9 @@ pub const ConnectionManager = struct {
         }
 
         self.operations.deinit();
+        if (self.last_error_message) |message| {
+            self.allocator.free(message);
+        }
         self.cursors.deinit();
         self.result_sets.deinit();
         self.connections.deinit();
@@ -480,9 +489,46 @@ pub const ConnectionManager = struct {
         _ = self.operations.remove(operation_id);
         self.state_lock.unlock();
 
+        if (operation.failure_message) |message| {
+            try self.setLastErrorOwned(message);
+            operation.failure_message = null;
+        }
+
         operation.deinit(self.allocator);
         self.allocator.destroy(operation);
         return result;
+    }
+
+    pub fn clearLastError(self: *ConnectionManager) void {
+        self.state_lock.lock();
+        defer self.state_lock.unlock();
+        self.clearLastErrorUnlocked();
+    }
+
+    pub fn setLastErrorCopy(self: *ConnectionManager, message: []const u8) !void {
+        const owned = try self.allocator.dupe(u8, message);
+        errdefer self.allocator.free(owned);
+        try self.setLastErrorOwned(owned);
+    }
+
+    pub fn setLastErrorOwned(self: *ConnectionManager, message: []u8) !void {
+        self.state_lock.lock();
+        defer self.state_lock.unlock();
+        self.clearLastErrorUnlocked();
+        self.last_error_message = message;
+    }
+
+    pub fn lastErrorMessage(self: *ConnectionManager) ?[]const u8 {
+        self.state_lock.lock();
+        defer self.state_lock.unlock();
+        return self.last_error_message;
+    }
+
+    fn clearLastErrorUnlocked(self: *ConnectionManager) void {
+        if (self.last_error_message) |message| {
+            self.allocator.free(message);
+            self.last_error_message = null;
+        }
     }
 
     pub fn fetchNext(self: *ConnectionManager, cursor_id: u64) !bool {
@@ -684,12 +730,13 @@ pub const ConnectionManager = struct {
 
     fn runOpenOperation(self: *ConnectionManager, operation: *AsyncOperation) void {
         operation.begin();
+        adbc_backend.clearLastDriverErrorMessage();
         const payload = operation.payload.open;
         const handle = self.open(.{
             .driver = payload.driver,
             .dsn = payload.dsn,
         }) catch |err| {
-            operation.fail(err);
+            operation.fail(err, adbc_backend.takeLastDriverErrorMessage(self.allocator));
             return;
         };
         operation.succeed(handle.id);
@@ -697,9 +744,10 @@ pub const ConnectionManager = struct {
 
     fn runExecuteOperation(self: *ConnectionManager, operation: *AsyncOperation) void {
         operation.begin();
+        adbc_backend.clearLastDriverErrorMessage();
         const payload = operation.payload.execute;
         const result_set = self.execute(payload.connection_id, payload.sql) catch |err| {
-            operation.fail(err);
+            operation.fail(err, adbc_backend.takeLastDriverErrorMessage(self.allocator));
             return;
         };
         operation.succeed(result_set.id);
@@ -707,9 +755,10 @@ pub const ConnectionManager = struct {
 
     fn runOpenCursorOperation(self: *ConnectionManager, operation: *AsyncOperation) void {
         operation.begin();
+        adbc_backend.clearLastDriverErrorMessage();
         const payload = operation.payload.open_cursor;
         const cursor = self.openCursor(payload.connection_id, payload.sql) catch |err| {
-            operation.fail(err);
+            operation.fail(err, adbc_backend.takeLastDriverErrorMessage(self.allocator));
             return;
         };
         operation.succeed(cursor.id);
