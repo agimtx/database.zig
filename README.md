@@ -37,6 +37,49 @@ database.zig is a database connection management library scaffold that uses Zig 
 - Node.js includes a thin ffi-napi-based binding scaffold for the public C ABI.
 - The current backend surface is a single built-in ADBC driver path selected through the public ABI.
 
+## ADBC Connection Strings
+
+The public API still exposes one built-in driver kind: `adbc`. Vendor selection now happens through the `dsn` value.
+
+Use a plain URI when the repository can infer a vendored driver from the scheme:
+
+```text
+sqlite:file::memory:
+postgresql://user:pass@localhost:5432/app
+snowflake://account/warehouse/db/schema
+```
+
+Use an explicit semicolon-separated option string when you need to point at a specific shared library, entrypoint, or custom search path:
+
+```text
+driver=/absolute/path/to/libadbc_driver_postgresql.dylib;uri=postgresql://user:pass@localhost:5432/app
+driver=/absolute/path/to/libadbc_driver_mysql.dylib;uri=mysql://user:pass@localhost:3306/app
+driver=/absolute/path/to/libadbc_driver_mysql.dylib;entrypoint=AdbcDriverMySQLInit;uri=mysql://user:pass@localhost:3306/app
+```
+
+Recognized reserved keys are:
+
+- `driver`
+- `uri`
+- `entrypoint`
+- `additional_manifest_search_path_list`
+
+Any other key-value pairs in the option string are forwarded to `AdbcDatabaseSetOption`.
+
+The vendored driver set in this workspace currently covers DuckDB, SQLite, PostgreSQL, Flight SQL, Snowflake, MySQL, BigQuery, SQL Server, Redshift, Trino, Databricks, ClickHouse, Exasol, and SingleStore.
+
+The platform matrix is not uniform. The upstream community ADBC registry currently publishes these community drivers for `macos_arm64`, `linux_amd64`, `linux_arm64`, and `windows_amd64`, but generally not for `macos_amd64`. In this repository, `macos-x86_64` now includes source-built Intel macOS dylibs for MySQL, BigQuery, Trino, Databricks, ClickHouse, Exasol, and SingleStore alongside the official Arrow/DuckDB artifacts. SQL Server and Redshift remain absent on `macos-x86_64` because the current community distributions do not publish Intel macOS artifacts and there is no public-source build path wired into this repository for them.
+
+## MySQL
+
+This repository now has the control-plane support needed to open an ADBC connection through a MySQL-compatible shared library. The workspace currently vendors a community MySQL ADBC driver under `third_party/adbc/1.11.0/lib/<platform>/`, so `mysql://...` now resolves automatically on the vendored macOS, Linux, and Windows targets shipped in this repository.
+
+On `macos-x86_64`, this repository vendors a separately built Intel macOS MySQL dylib together with source-built Intel macOS dylibs for BigQuery, Trino, Databricks, ClickHouse, Exasol, and SingleStore.
+
+On platforms where the repository does not have a vendored MySQL shared library yet, keep using an explicit native path such as `driver=/absolute/path/to/libadbc_driver_mysql.dylib;uri=mysql://...`.
+
+On macOS, some third-party drivers may also require setting `DYLD_LIBRARY_PATH` so their native dependencies can be resolved before `database.zig` loads them.
+
 ## Common Commands
 
 ```bash

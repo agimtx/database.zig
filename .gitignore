@@ -4,3 +4,12 @@ target/
 node_modules/
 __pycache__/
 .venv/
+third_party/
+.tmp/
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+*.swp
+.env

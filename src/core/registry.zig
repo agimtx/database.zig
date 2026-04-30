@@ -1,6 +1,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const driver = @import("driver.zig");
+const adbc_backend = @import("adbc_backend.zig");
 
 pub const DriverRegistry = struct {
     allocator: std.mem.Allocator,
@@ -37,13 +38,16 @@ pub const DriverRegistry = struct {
                 .kind = kind,
                 .name = builtinName(kind),
                 .language = .shared_library,
-                .open = driver.stubOpen,
-                .close = driver.stubClose,
-                .execute = driver.stubExecute,
-                .close_result_set = driver.stubCloseResultSet,
-                .open_cursor = driver.stubOpenCursor,
-                .fetch_cursor_next = driver.stubFetchCursorNext,
-                .close_cursor = driver.stubCloseCursor,
+                .open = adbc_backend.open,
+                .close = adbc_backend.close,
+                .test_connection = adbc_backend.testConnection,
+                .execute = adbc_backend.execute,
+                .close_result_set = adbc_backend.closeResultSet,
+                .get_tables = adbc_backend.getTables,
+                .get_databases = adbc_backend.getDatabases,
+                .open_cursor = adbc_backend.openCursor,
+                .fetch_cursor_next = adbc_backend.fetchCursorNext,
+                .close_cursor = adbc_backend.closeCursor,
             });
         }
     }

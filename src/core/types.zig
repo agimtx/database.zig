@@ -27,6 +27,20 @@ pub const ColumnMetadata = struct {
     nullable: bool = true,
 };
 
+pub const ResultCell = struct {
+    text: []const u8,
+    is_null: bool = false,
+};
+
+pub const ResultRow = struct {
+    values: []const ResultCell,
+};
+
+pub const GetTablesOptions = struct {
+    catalog: ?[]const u8 = null,
+    database: ?[]const u8 = null,
+};
+
 pub const ConnectOptions = struct {
     driver: DriverKind,
     dsn: []const u8,

@@ -10,6 +10,8 @@
         "src",
         "bindings",
         "drivers",
+        "scripts",
+        "third_party",
         "docs",
         "README.md",
         ".github",
