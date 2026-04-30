@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const repoRoot = path.resolve(__dirname, "../..");
 const defaultEnvFile = path.join(repoRoot, ".env");
+const repoTmpRoot = path.join(repoRoot, ".tmp");
 const testSql = "select 1 as id, 'alpha' as value union all select 2 as id, 'beta' as value";
 
 let bindingModule;
@@ -146,6 +147,40 @@ function defaultDatabase(sectionName) {
   return "";
 }
 
+function vendoredDriverPath(name) {
+  let host;
+  let fileName;
+
+  if (process.platform === "darwin") {
+    host = process.arch === "arm64" ? "macos-arm64" : "macos-x86_64";
+    fileName = name === "duckdb" ? "libduckdb.dylib" : `libadbc_driver_${name}.dylib`;
+  } else if (process.platform === "linux") {
+    host = process.arch === "arm64" ? "linux-arm64" : "linux-x86_64";
+    fileName = name === "duckdb" ? "libduckdb.so" : `libadbc_driver_${name}.so`;
+  } else if (process.platform === "win32") {
+    host = "windows-x86_64";
+    fileName = name === "duckdb" ? "duckdb.dll" : `adbc_driver_${name}.dll`;
+  } else {
+    throw new Error(`unsupported platform for vendored ADBC driver lookup: ${process.platform}`);
+  }
+
+  return path.join(repoRoot, "third_party", "adbc", "1.11.0", "lib", host, fileName);
+}
+
+function repoTmpDir(...parts) {
+  const target = path.join(repoTmpRoot, ...parts);
+  fs.mkdirSync(target, { recursive: true });
+  return target;
+}
+
+function duckDbTestDsn(filePath) {
+  return `driver=${vendoredDriverPath("duckdb")};entrypoint=duckdb_adbc_init;path=${filePath}`;
+}
+
+function removeFileIfExists(filePath) {
+  fs.rmSync(filePath, { force: true });
+}
+
 function uniqueIdentifier(prefix) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
@@ -225,6 +260,10 @@ module.exports = {
   bindingModule,
   loadTarget,
   shouldRunSection,
+  vendoredDriverPath,
+  repoTmpDir,
+  duckDbTestDsn,
+  removeFileIfExists,
   uniqueIdentifier,
   executeNonQuery,
   readResultSetValues,

@@ -4,6 +4,7 @@ from collections.abc import Callable
 import configparser
 import importlib
 import os
+import platform
 import sys
 import unittest
 import uuid
@@ -14,6 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_BINDING_ROOT = REPO_ROOT / "bindings" / "python"
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
+REPO_TMP_ROOT = REPO_ROOT / ".tmp"
 TEST_SQL = "select 1 as id, 'alpha' as value union all select 2 as id, 'beta' as value"
 
 if str(PYTHON_BINDING_ROOT) not in sys.path:
@@ -118,6 +120,45 @@ def escape_path_part(value: str) -> str:
     from urllib.parse import quote
 
     return quote(value, safe="")
+
+
+def repo_tmp_dir(*parts: str) -> Path:
+    target = REPO_TMP_ROOT.joinpath(*parts)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def vendored_adbc_driver_path(name: str) -> Path:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system == "darwin":
+        host = "macos-arm64" if machine in {"arm64", "aarch64"} else "macos-x86_64"
+        suffix = ".dylib"
+        file_name = f"lib{name}{suffix}" if name == "duckdb" else f"libadbc_driver_{name}{suffix}"
+    elif system == "linux":
+        host = "linux-arm64" if machine in {"arm64", "aarch64"} else "linux-x86_64"
+        suffix = ".so"
+        file_name = f"lib{name}{suffix}" if name == "duckdb" else f"libadbc_driver_{name}{suffix}"
+    elif system == "windows":
+        host = "windows-x86_64"
+        file_name = f"{name}.dll" if name == "duckdb" else f"adbc_driver_{name}.dll"
+    else:
+        raise RuntimeError(f"unsupported platform for vendored ADBC driver lookup: {system}")
+
+    return REPO_ROOT / "third_party" / "adbc" / "1.11.0" / "lib" / host / file_name
+
+
+def duckdb_test_dsn(database_path: Path) -> str:
+    driver_path = vendored_adbc_driver_path("duckdb")
+    return f"driver={driver_path};entrypoint=duckdb_adbc_init;path={database_path}"
+
+
+def remove_file_if_exists(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 async def assert_database_binding(section: str) -> None:

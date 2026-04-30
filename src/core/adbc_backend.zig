@@ -191,8 +191,7 @@ pub fn open(
 
     const manager_path = try resolveDriverManagerPath(temp);
     const vendor_driver_path = try resolveVendorDriverPath(temp, parsed, options.dsn);
-    const uri = parsed.uri orelse options.dsn;
-    const inferred_driver_name = inferDriverName(uri);
+    const inferred_driver_name = inferDriverName(parsed.uri orelse options.dsn);
 
     var context = try allocator.create(ConnectionContext);
     errdefer allocator.destroy(context);
@@ -228,7 +227,9 @@ pub fn open(
     if (parsed.entrypoint orelse defaultEntrypointForDriver(inferred_driver_name)) |entrypoint| {
         try setDatabaseOption(temp, &context.runtime, &context.database, reserved_option_entrypoint, entrypoint, &error_info);
     }
-    try setDatabaseOption(temp, &context.runtime, &context.database, reserved_option_uri, uri, &error_info);
+    if (parsed.uri) |uri| {
+        try setDatabaseOption(temp, &context.runtime, &context.database, reserved_option_uri, uri, &error_info);
+    }
 
     for (parsed.options.items) |item| {
         try setDatabaseOption(temp, &context.runtime, &context.database, item.key, item.value, &error_info);

@@ -76,6 +76,7 @@ runtime_packages_for_driver() {
     conda_subdir="$2"
 
     case "${driver}:${conda_subdir}" in
+        duckdb:osx-arm64|duckdb:osx-64) echo "icu=75.1" ;;
         postgresql:win-64) echo "libpq openssl krb5 cyrus-sasl" ;;
         postgresql:*) echo "libpq openssl krb5 openldap cyrus-sasl" ;;
         *) return 1 ;;
@@ -155,7 +156,7 @@ driver_runtime_filename() {
 
 driver_has_external_runtime_dependencies() {
     case "$1" in
-        postgresql) return 0 ;;
+        duckdb|postgresql) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -168,6 +169,17 @@ driver_dependency_bundle_ready() {
     driver_has_external_runtime_dependencies "${driver}" || return 1
 
     case "$driver" in
+        duckdb)
+            case "${host_tag}" in
+                macos-*)
+                    all_patterns_present "${lib_dir}" \
+                        'libicui18n*.dylib' \
+                        'libicuuc*.dylib' \
+                        'libicudata*.dylib'
+                    ;;
+                *) return 1 ;;
+            esac
+            ;;
         postgresql)
             case "${host_tag}" in
                 macos-*)
@@ -240,6 +252,16 @@ driver_artifacts_ready() {
     [ -f "${lib_dir}/${runtime_file}" ] || return 1
 
     case "$driver" in
+        duckdb)
+            case "${host_tag}" in
+                macos-*)
+                    all_patterns_present "${lib_dir}" \
+                        'libicui18n*.dylib' \
+                        'libicuuc*.dylib' \
+                        'libicudata*.dylib'
+                    ;;
+            esac
+            ;;
         postgresql)
             case "${host_tag}" in
                 macos-*)
@@ -361,6 +383,16 @@ copy_runtime_dependencies() {
     driver="$4"
 
     case "$driver" in
+        duckdb)
+            case "${host_tag}" in
+                macos-*)
+                    copy_matching_runtime_files "${temp_prefix}/lib" "${lib_dir}" \
+                        'libicui18n*.dylib' \
+                        'libicuuc*.dylib' \
+                        'libicudata*.dylib'
+                    ;;
+            esac
+            ;;
         postgresql)
             case "${host_tag}" in
                 macos-*)
