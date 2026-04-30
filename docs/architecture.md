@@ -27,6 +27,7 @@
 The Zig-to-ADBC boundary is a shared-library dependency boundary. Zig depends on the Arrow ADBC driver manager and vendor driver shared libraries for the current target, and the public language bindings only interact with Zig.
 
 See `docs/native-driver-linking.md` for the per-platform artifact and ABI rules.
+See `docs/type-mapping.md` for the normalized `aq_database` column types and current Arrow/ADBC mapping rules.
 
 ## Evolution Path
 

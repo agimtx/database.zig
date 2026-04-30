@@ -40,6 +40,14 @@ class ColumnType(IntEnum):
     DECIMAL = 6
     TIMESTAMP = 7
     JSON = 8
+    DATE = 9
+    TIME = 10
+    INTERVAL = 11
+    UUID = 12
+    XML = 13
+    ARRAY = 14
+    MAP = 15
+    STRUCT = 16
 
 
 class _CColumnMetadata(ctypes.Structure):

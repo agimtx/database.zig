@@ -2,7 +2,114 @@ from __future__ import annotations
 
 import unittest
 
-from _support import ConnectionManager, assert_type_coverage, execute_non_query, load_test_target, read_result_set_values, should_run_section, unique_identifier
+from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_non_empty_value, assert_type_coverage, execute_non_query, load_test_target, read_result_set_values, should_run_section, unique_identifier
+
+
+STARROCKS_ADDITIONAL_TYPES_SQL = (
+    "select "
+    "cast(1 as tinyint) as tiny_value, "
+    "cast(2 as smallint) as small_value, "
+    "cast(3 as int) as int_value, "
+    "cast(4 as bigint) as big_value, "
+    "cast(5.5 as float) as float_value, "
+    "cast(6.5 as double) as double_value, "
+    "cast('[1,2,3]' as array<int>) as array_value, "
+    "map('a',1,'b',2) as map_value, "
+    "row(1, 'alpha') as struct_value"
+)
+
+
+def build_starrocks_type_coverage_case(table_name: str) -> dict[str, object]:
+    return {
+        "metadata_database": None,
+        "create_table_sql": (
+            f"create table {table_name} ("
+            "id bigint not null, "
+            "bool_value boolean not null, "
+            "int_value bigint not null, "
+            "float_value double not null, "
+            "text_value string not null, "
+            "fixed_text_value char(5) not null, "
+            "decimal_value decimal(10, 2) not null, "
+            "date_value date not null, "
+            "timestamp_value datetime not null, "
+            "largeint_value largeint not null, "
+            "json_value json not null"
+            ") duplicate key(id) distributed by hash(id) buckets 1 "
+            'properties ("replication_num" = "1")'
+        ),
+        "insert_sql": (
+            f"insert into {table_name} ("
+            "id, bool_value, int_value, float_value, text_value, fixed_text_value, decimal_value, date_value, timestamp_value, largeint_value, json_value"
+            ") values ("
+            "1, true, 42, 3.5, 'alpha', 'omega', 123.45, '2024-01-02', '2024-01-02 03:04:05', 123456789012345678901234567890, parse_json('{\"enabled\": true, \"count\": 1}')"
+            ")"
+        ),
+        "select_sql": (
+            f"select id, bool_value, int_value, float_value, text_value, fixed_text_value, "
+            f"decimal_value, date_value, timestamp_value, largeint_value, json_value from {table_name} order by id"
+        ),
+        "expected_columns": [
+            {"name": "id", "column_type": ColumnType.INT64},
+            {"name": "bool_value", "column_type": [ColumnType.BOOLEAN, ColumnType.INT64]},
+            {"name": "int_value", "column_type": ColumnType.INT64},
+            {"name": "float_value", "column_type": ColumnType.FLOAT64},
+            {"name": "text_value", "column_type": ColumnType.TEXT},
+            {"name": "fixed_text_value", "column_type": ColumnType.TEXT},
+            {"name": "decimal_value", "column_type": ColumnType.DECIMAL},
+            {"name": "date_value", "column_type": ColumnType.DATE},
+            {"name": "timestamp_value", "column_type": ColumnType.TIMESTAMP},
+            {"name": "largeint_value", "column_type": ColumnType.TEXT},
+            {"name": "json_value", "column_type": [ColumnType.JSON, ColumnType.TEXT]},
+        ],
+    }
+
+
+def assert_starrocks_type_coverage_values(result_set: object) -> None:
+    assert result_set.value(0, 0) == "1"
+    assert_boolean_value(result_set.value(0, 1))
+    assert result_set.value(0, 2) == "42"
+    float_value = result_set.value(0, 3)
+    assert isinstance(float_value, str)
+    assert float_value.startswith("3.5")
+    assert result_set.value(0, 4) == "alpha"
+    assert result_set.value(0, 5) == "omega"
+    assert_non_empty_value(result_set.value(0, 6), "decimal_value")
+    assert result_set.value(0, 7) == "2024-01-02"
+    timestamp_value = result_set.value(0, 8)
+    assert isinstance(timestamp_value, str)
+    assert timestamp_value.startswith("2024-01-02T03:04:05")
+    assert result_set.value(0, 9) == "123456789012345678901234567890"
+    json_value = result_set.value(0, 10)
+    assert isinstance(json_value, str)
+    assert '"enabled"' in json_value
+
+
+async def assert_starrocks_additional_type_coverage(connection: object) -> None:
+    result_set = await connection.execute_async(STARROCKS_ADDITIONAL_TYPES_SQL)
+    try:
+        assert_column_metadata(result_set.columns, [
+            {"name": "tiny_value", "column_type": ColumnType.INT64},
+            {"name": "small_value", "column_type": ColumnType.INT64},
+            {"name": "int_value", "column_type": ColumnType.INT64},
+            {"name": "big_value", "column_type": ColumnType.INT64},
+            {"name": "float_value", "column_type": ColumnType.FLOAT64},
+            {"name": "double_value", "column_type": ColumnType.FLOAT64},
+            {"name": "array_value", "column_type": ColumnType.TEXT},
+            {"name": "map_value", "column_type": ColumnType.TEXT},
+            {"name": "struct_value", "column_type": ColumnType.TEXT},
+        ])
+        assert result_set.value(0, 0) == "1"
+        assert result_set.value(0, 1) == "2"
+        assert result_set.value(0, 2) == "3"
+        assert result_set.value(0, 3) == "4"
+        assert result_set.value(0, 4) == "5.5"
+        assert result_set.value(0, 5) == "6.5"
+        assert result_set.value(0, 6) == "[1,2,3]"
+        assert result_set.value(0, 7) == '{"a":1,"b":2}'
+        assert result_set.value(0, 8) == '{"col1":1,"col2":"alpha"}'
+    finally:
+        await result_set.close_async()
 
 
 class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
@@ -28,7 +135,8 @@ class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 try:
                     self.assertTrue(await database_connection.test_async())
 
-                    await assert_type_coverage(database_connection, "starrocks", table_name)
+                    await assert_type_coverage(database_connection, build_starrocks_type_coverage_case(table_name), assert_starrocks_type_coverage_values)
+                    await assert_starrocks_additional_type_coverage(database_connection)
 
                     missing_table = unique_identifier("missing")
                     with self.assertRaisesRegex(RuntimeError, missing_table):

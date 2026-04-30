@@ -40,7 +40,15 @@ enum aq_column_type {
     AQ_COLUMN_BINARY = 5,
     AQ_COLUMN_DECIMAL = 6,
     AQ_COLUMN_TIMESTAMP = 7,
-    AQ_COLUMN_JSON = 8
+    AQ_COLUMN_JSON = 8,
+    AQ_COLUMN_DATE = 9,
+    AQ_COLUMN_TIME = 10,
+    AQ_COLUMN_INTERVAL = 11,
+    AQ_COLUMN_UUID = 12,
+    AQ_COLUMN_XML = 13,
+    AQ_COLUMN_ARRAY = 14,
+    AQ_COLUMN_MAP = 15,
+    AQ_COLUMN_STRUCT = 16
 };
 
 struct aq_column_metadata {

@@ -29,6 +29,14 @@ const COLUMN_TYPES = {
   DECIMAL: 6,
   TIMESTAMP: 7,
   JSON: 8,
+  DATE: 9,
+  TIME: 10,
+  INTERVAL: 11,
+  UUID: 12,
+  XML: 13,
+  ARRAY: 14,
+  MAP: 15,
+  STRUCT: 16,
 };
 
 const POINTER_SIZE = ref.sizeof.pointer;

@@ -27,6 +27,8 @@ const reserved_option_driver = "driver";
 const reserved_option_uri = "uri";
 const reserved_option_entrypoint = "entrypoint";
 const reserved_option_additional_search_path = "additional_manifest_search_path_list";
+const arrow_extension_name_key = "ARROW:extension:name";
+const postgres_typname_key = "ADBC:postgresql:typname";
 
 const DbSetOptionFn = *const fn (*AdbcDatabase, [*:0]const u8, [*:0]const u8, ?*AdbcError) callconv(.c) u8;
 const DbNewFn = *const fn (*AdbcDatabase, ?*AdbcError) callconv(.c) u8;
@@ -785,7 +787,7 @@ fn cellFromArrow(
 
     const format = if (schema.format) |value| std.mem.span(value) else "";
     return .{
-        .text = try extractArrowValueText(allocator, format, array, row_index),
+        .text = try extractArrowValueText(allocator, schema, format, array, row_index),
         .is_null = false,
     };
 }
@@ -869,12 +871,52 @@ fn isNullAt(array: *ArrowArray, row_index: usize) bool {
 
 fn extractArrowValueText(
     allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
     format: []const u8,
     array: *ArrowArray,
     row_index: usize,
 ) ![]u8 {
     if (format.len == 0) {
         return allocator.alloc(u8, 0);
+    }
+
+    if (try extractOpaqueValueText(allocator, schema, format, array, row_index)) |text| {
+        return text;
+    }
+
+    if (format[0] == 'v' and format.len >= 2) {
+        return switch (format[1]) {
+            'u' => formatArrowViewUtf8(allocator, array, row_index),
+            'z' => formatArrowViewBinary(allocator, array, row_index),
+            else => allocator.alloc(u8, 0),
+        };
+    }
+
+    if (format[0] == '+' and format.len >= 2) {
+        return switch (format[1]) {
+            'l' => formatArrowList(allocator, schema, array, row_index, i32),
+            'L' => formatArrowList(allocator, schema, array, row_index, i64),
+            'v' => if (format.len >= 3) switch (format[2]) {
+                'l' => formatArrowListView(allocator, schema, array, row_index, i32),
+                'L' => formatArrowListView(allocator, schema, array, row_index, i64),
+                else => allocator.alloc(u8, 0),
+            } else allocator.alloc(u8, 0),
+            'w' => formatArrowFixedSizeList(allocator, schema, format, array, row_index),
+            's' => formatArrowStruct(allocator, schema, array, row_index),
+            'm' => formatArrowMap(allocator, schema, array, row_index),
+            else => allocator.alloc(u8, 0),
+        };
+    }
+
+    if (format[0] == 't' and format.len >= 2) {
+        return switch (format[1]) {
+            'd' => formatArrowDate(allocator, format, array, row_index),
+            't' => formatArrowTime(allocator, format, array, row_index),
+            's' => formatArrowTimestamp(allocator, format, array, row_index),
+            'D' => formatArrowDuration(allocator, format, array, row_index),
+            'i' => formatArrowInterval(allocator, format, array, row_index),
+            else => allocator.alloc(u8, 0),
+        };
     }
 
     return switch (format[0]) {
@@ -895,7 +937,7 @@ fn extractArrowValueText(
         'Z' => formatArrowBinary(allocator, i64, array, row_index),
         'w' => formatArrowFixedBinary(allocator, format, array, row_index),
         'd' => formatArrowBinaryWord(allocator, 16, array, row_index),
-        't', 'T' => formatArrowInt(allocator, i64, array, row_index),
+        'T' => formatArrowInt(allocator, i64, array, row_index),
         else => allocator.alloc(u8, 0),
     };
 }
@@ -974,6 +1016,16 @@ fn formatArrowUtf8(
     return allocator.dupe(u8, values[start..end]);
 }
 
+fn formatArrowViewUtf8(allocator: std.mem.Allocator, array: *ArrowArray, row_index: usize) ![]u8 {
+    const bytes = try readArrowViewSlice(array, row_index);
+    return allocator.dupe(u8, bytes);
+}
+
+fn formatArrowViewBinary(allocator: std.mem.Allocator, array: *ArrowArray, row_index: usize) ![]u8 {
+    const bytes = try readArrowViewSlice(array, row_index);
+    return encodeHexAlloc(allocator, bytes);
+}
+
 fn formatArrowBinary(
     allocator: std.mem.Allocator,
     comptime OffsetType: type,
@@ -1030,20 +1082,578 @@ fn encodeHexAlloc(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
     return encoded;
 }
 
-fn mapArrowSchemaToColumnType(schema: *ArrowSchema) types.ColumnType {
-    if (schema.dictionary) |dictionary| {
-        return mapArrowSchemaToColumnType(dictionary);
+const BinaryView = extern struct {
+    size: i32,
+    inline_or_ref: [12]u8,
+};
+
+const DayTimeInterval = extern struct {
+    days: i32,
+    milliseconds: i32,
+};
+
+const MonthDayNanoInterval = extern struct {
+    months: i32,
+    days: i32,
+    nanoseconds: i64,
+};
+
+const seconds_per_day: i64 = 86_400;
+const milliseconds_per_day: i64 = seconds_per_day * 1_000;
+const microseconds_per_day: i64 = seconds_per_day * 1_000_000;
+const nanoseconds_per_day: i64 = seconds_per_day * 1_000_000_000;
+const nanoseconds_per_microsecond: i64 = 1_000;
+
+fn readArrowUtf8Slice(
+    comptime OffsetType: type,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]const u8 {
+    if (array.buffers == null or array.buffers[1] == null or array.buffers[2] == null) {
+        return Error.QueryFailed;
+    }
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const offsets: [*]const OffsetType = @ptrCast(@alignCast(array.buffers[1].?));
+    const values: [*]const u8 = @ptrCast(array.buffers[2].?);
+    const start: usize = @intCast(offsets[logical_index]);
+    const end: usize = @intCast(offsets[logical_index + 1]);
+    return values[start..end];
+}
+
+fn readArrowBinarySlice(
+    comptime OffsetType: type,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]const u8 {
+    return readArrowUtf8Slice(OffsetType, array, row_index);
+}
+
+fn readArrowFixedBinarySlice(format: []const u8, array: *ArrowArray, row_index: usize) ![]const u8 {
+    if (array.buffers == null or array.buffers[1] == null) {
+        return Error.QueryFailed;
+    }
+    const colon_index = std.mem.indexOfScalar(u8, format, ':') orelse return Error.QueryFailed;
+    const byte_width = try std.fmt.parseInt(usize, format[colon_index + 1 ..], 10);
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const values: [*]const u8 = @ptrCast(array.buffers[1].?);
+    const start = logical_index * byte_width;
+    return values[start .. start + byte_width];
+}
+
+fn readArrowViewSlice(array: *ArrowArray, row_index: usize) ![]const u8 {
+    if (array.buffers == null or array.buffers[1] == null) {
+        return Error.QueryFailed;
     }
 
-    if (arrowExtensionName(schema.metadata)) |extension_name| {
-        if (std.mem.eql(u8, extension_name, "arrow.json")) return .json;
-        if (std.mem.eql(u8, extension_name, "arrow.uuid")) return .text;
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const views: [*]const BinaryView = @ptrCast(@alignCast(array.buffers[1].?));
+    const view = views[logical_index];
+    const size: usize = @intCast(view.size);
+    if (size <= 12) {
+        return view.inline_or_ref[0..size];
     }
 
-    return mapArrowFormatToColumnType(if (schema.format) |fmt| std.mem.span(fmt) else "");
+    if (array.n_buffers < 4) {
+        return Error.QueryFailed;
+    }
+
+    const buffer_index = std.mem.readInt(i32, view.inline_or_ref[4..8], builtin.cpu.arch.endian());
+    const offset = std.mem.readInt(i32, view.inline_or_ref[8..12], builtin.cpu.arch.endian());
+    if (buffer_index < 0 or offset < 0) {
+        return Error.QueryFailed;
+    }
+
+    const data_buffer_index: usize = 3 + @as(usize, @intCast(buffer_index));
+    if (data_buffer_index >= @as(usize, @intCast(array.n_buffers)) or array.buffers[data_buffer_index] == null) {
+        return Error.QueryFailed;
+    }
+
+    const values: [*]const u8 = @ptrCast(array.buffers[data_buffer_index].?);
+    const start: usize = @intCast(offset);
+    return values[start .. start + size];
+}
+
+fn readArrowValueBytesForOpaque(format: []const u8, array: *ArrowArray, row_index: usize) !?[]const u8 {
+    if (format.len == 0) return null;
+
+    if (format[0] == 'v' and format.len >= 2) {
+        return switch (format[1]) {
+            'u', 'z' => try readArrowViewSlice(array, row_index),
+            else => null,
+        };
+    }
+
+    return switch (format[0]) {
+        'u' => try readArrowUtf8Slice(i32, array, row_index),
+        'U' => try readArrowUtf8Slice(i64, array, row_index),
+        'z' => try readArrowBinarySlice(i32, array, row_index),
+        'Z' => try readArrowBinarySlice(i64, array, row_index),
+        'w' => try readArrowFixedBinarySlice(format, array, row_index),
+        else => null,
+    };
+}
+
+fn formatArrowDate(
+    allocator: std.mem.Allocator,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (format.len < 3) return Error.QueryFailed;
+    return switch (format[2]) {
+        'D' => formatDaysSinceEpoch(allocator, try readArrowPrimitiveValue(i32, array, row_index)),
+        'm' => formatDaysSinceEpoch(allocator, @divFloor(try readArrowPrimitiveValue(i64, array, row_index), milliseconds_per_day)),
+        else => allocator.alloc(u8, 0),
+    };
+}
+
+fn formatArrowTime(
+    allocator: std.mem.Allocator,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (format.len < 3) return Error.QueryFailed;
+    return switch (format[2]) {
+        's' => formatTimeOfDay(allocator, try readArrowPrimitiveValue(i32, array, row_index), 0),
+        'm' => formatTimeOfDay(allocator, try readArrowPrimitiveValue(i32, array, row_index), 3),
+        'u' => formatTimeOfDay(allocator, try readArrowPrimitiveValue(i64, array, row_index), 6),
+        'n' => formatTimeOfDay(allocator, try readArrowPrimitiveValue(i64, array, row_index), 9),
+        else => allocator.alloc(u8, 0),
+    };
+}
+
+fn formatArrowTimestamp(
+    allocator: std.mem.Allocator,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (format.len < 3) return Error.QueryFailed;
+    const raw_value = try readArrowPrimitiveValue(i64, array, row_index);
+    return formatTimestampValue(allocator, raw_value, format[2]);
+}
+
+fn formatArrowDuration(
+    allocator: std.mem.Allocator,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (format.len < 3) return Error.QueryFailed;
+    const raw_value = try readArrowPrimitiveValue(i64, array, row_index);
+    return switch (format[2]) {
+        's' => std.fmt.allocPrint(allocator, "PT{}S", .{raw_value}),
+        'm' => formatDayTimeIntervalComponents(allocator, 0, raw_value),
+        'u' => formatMonthDayNanoIntervalComponents(allocator, 0, 0, raw_value * nanoseconds_per_microsecond),
+        'n' => formatMonthDayNanoIntervalComponents(allocator, 0, 0, raw_value),
+        else => allocator.alloc(u8, 0),
+    };
+}
+
+fn formatArrowInterval(
+    allocator: std.mem.Allocator,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (format.len < 3) return Error.QueryFailed;
+    return switch (format[2]) {
+        'M' => formatMonthDayNanoIntervalComponents(allocator, try readArrowPrimitiveValue(i32, array, row_index), 0, 0),
+        'D' => {
+            const interval_value = try readArrowPrimitiveValue(DayTimeInterval, array, row_index);
+            return formatDayTimeIntervalComponents(allocator, interval_value.days, interval_value.milliseconds);
+        },
+        'n' => {
+            const interval_value = try readArrowPrimitiveValue(MonthDayNanoInterval, array, row_index);
+            return formatMonthDayNanoIntervalComponents(allocator, interval_value.months, interval_value.days, interval_value.nanoseconds);
+        },
+        else => allocator.alloc(u8, 0),
+    };
+}
+
+const CivilDate = struct {
+    year: i64,
+    month: i64,
+    day: i64,
+};
+
+fn civilFromDays(days_since_epoch: i64) CivilDate {
+    const shifted = days_since_epoch + 719_468;
+    const era = @divFloor(if (shifted >= 0) shifted else shifted - 146_096, 146_097);
+    const day_of_era = shifted - era * 146_097;
+    const year_of_era = @divFloor(day_of_era - @divFloor(day_of_era, 1_460) + @divFloor(day_of_era, 36_524) - @divFloor(day_of_era, 146_096), 365);
+    var year = year_of_era + era * 400;
+    const day_of_year = day_of_era - (365 * year_of_era + @divFloor(year_of_era, 4) - @divFloor(year_of_era, 100));
+    const month_prime = @divFloor(5 * day_of_year + 2, 153);
+    const day = day_of_year - @divFloor(153 * month_prime + 2, 5) + 1;
+    const month = month_prime + (if (month_prime < 10) @as(i64, 3) else @as(i64, -9));
+    if (month <= 2) year += 1;
+    return .{ .year = year, .month = month, .day = day };
+}
+
+fn formatDaysSinceEpoch(allocator: std.mem.Allocator, days_since_epoch: anytype) ![]u8 {
+    const civil = civilFromDays(@as(i64, @intCast(days_since_epoch)));
+    return formatIsoDate(allocator, civil.year, civil.month, civil.day);
+}
+
+fn formatIsoDate(allocator: std.mem.Allocator, year: i64, month: i64, day: i64) ![]u8 {
+    const month_value: u64 = @intCast(month);
+    const day_value: u64 = @intCast(day);
+    if (year < 0) {
+        return std.fmt.allocPrint(allocator, "-{d:0>4}-{d:0>2}-{d:0>2}", .{ @as(u64, @intCast(-year)), month_value, day_value });
+    }
+    return std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2}", .{ @as(u64, @intCast(year)), month_value, day_value });
+}
+
+fn formatTimeOfDay(allocator: std.mem.Allocator, raw_value: anytype, fraction_digits: usize) ![]u8 {
+    const value: i64 = @intCast(raw_value);
+    const scale: i64 = switch (fraction_digits) {
+        0 => 1,
+        3 => 1_000,
+        6 => 1_000_000,
+        9 => 1_000_000_000,
+        else => return Error.QueryFailed,
+    };
+    const total_seconds = @divFloor(value, scale);
+    const fractional = @mod(value, scale);
+    const hours = @divFloor(total_seconds, 3_600);
+    const minutes = @mod(@divFloor(total_seconds, 60), 60);
+    const seconds = @mod(total_seconds, 60);
+    const hour_value: u64 = @intCast(hours);
+    const minute_value: u64 = @intCast(minutes);
+    const second_value: u64 = @intCast(seconds);
+    if (fraction_digits == 0) {
+        return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2}:{d:0>2}", .{ hour_value, minute_value, second_value });
+    }
+    const fraction_text = switch (fraction_digits) {
+        3 => try std.fmt.allocPrint(allocator, "{d:0>3}", .{@as(u64, @intCast(fractional))}),
+        6 => try std.fmt.allocPrint(allocator, "{d:0>6}", .{@as(u64, @intCast(fractional))}),
+        9 => try std.fmt.allocPrint(allocator, "{d:0>9}", .{@as(u64, @intCast(fractional))}),
+        else => return Error.QueryFailed,
+    };
+    defer allocator.free(fraction_text);
+    return std.fmt.allocPrint(allocator, "{d:0>2}:{d:0>2}:{d:0>2}.{s}", .{ hour_value, minute_value, second_value, fraction_text });
+}
+
+fn formatTimestampValue(allocator: std.mem.Allocator, raw_value: i64, unit: u8) ![]u8 {
+    const units_per_second: i64 = switch (unit) {
+        's' => 1,
+        'm' => 1_000,
+        'u' => 1_000_000,
+        'n' => 1_000_000_000,
+        else => return Error.QueryFailed,
+    };
+    const units_per_day = units_per_second * seconds_per_day;
+    const days_since_epoch = @divFloor(raw_value, units_per_day);
+    const day_units = @mod(raw_value, units_per_day);
+    const civil = civilFromDays(days_since_epoch);
+    const time_text = switch (unit) {
+        's' => try formatTimeOfDay(allocator, day_units, 0),
+        'm' => try formatTimeOfDay(allocator, day_units, 3),
+        'u' => try formatTimeOfDay(allocator, day_units, 6),
+        'n' => try formatTimeOfDay(allocator, day_units, 9),
+        else => unreachable,
+    };
+    defer allocator.free(time_text);
+    const date_text = try formatIsoDate(allocator, civil.year, civil.month, civil.day);
+    defer allocator.free(date_text);
+    return std.fmt.allocPrint(allocator, "{s}T{s}", .{ date_text, time_text });
+}
+
+fn formatDayTimeIntervalComponents(allocator: std.mem.Allocator, days: anytype, milliseconds: anytype) ![]u8 {
+    const day_value: i64 = @intCast(days);
+    const millisecond_value: i64 = @intCast(milliseconds);
+    const time_text = try formatTimeOfDay(allocator, millisecond_value, 3);
+    defer allocator.free(time_text);
+    return std.fmt.allocPrint(allocator, "P{}DT{s}", .{ day_value, time_text });
+}
+
+fn formatMonthDayNanoIntervalComponents(allocator: std.mem.Allocator, months: anytype, days: anytype, nanoseconds: anytype) ![]u8 {
+    const month_value: i64 = @intCast(months);
+    const day_value: i64 = @intCast(days);
+    const nanosecond_value: i64 = @intCast(nanoseconds);
+    const time_text = try formatTimeOfDay(allocator, nanosecond_value, 9);
+    defer allocator.free(time_text);
+    return std.fmt.allocPrint(allocator, "P{}M{}DT{s}", .{ month_value, day_value, time_text });
+}
+
+fn formatArrowList(
+    allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
+    array: *ArrowArray,
+    row_index: usize,
+    comptime OffsetType: type,
+) ![]u8 {
+    if (schema.n_children != 1 or schema.children == null or array.n_children != 1 or array.children == null) {
+        return Error.QueryFailed;
+    }
+    if (array.buffers == null or array.buffers[1] == null) {
+        return Error.QueryFailed;
+    }
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const offsets: [*]const OffsetType = @ptrCast(@alignCast(array.buffers[1].?));
+    const start: usize = @intCast(offsets[logical_index]);
+    const end: usize = @intCast(offsets[logical_index + 1]);
+    return formatArrowSequenceJson(
+        allocator,
+        schema.children[0] orelse return Error.QueryFailed,
+        array.children[0] orelse return Error.QueryFailed,
+        start,
+        end,
+    );
+}
+
+fn formatArrowListView(
+    allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
+    array: *ArrowArray,
+    row_index: usize,
+    comptime OffsetType: type,
+) ![]u8 {
+    if (schema.n_children != 1 or schema.children == null or array.n_children != 1 or array.children == null) {
+        return Error.QueryFailed;
+    }
+    if (array.buffers == null or array.buffers[1] == null or array.buffers[2] == null) {
+        return Error.QueryFailed;
+    }
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const offsets: [*]const OffsetType = @ptrCast(@alignCast(array.buffers[1].?));
+    const sizes: [*]const OffsetType = @ptrCast(@alignCast(array.buffers[2].?));
+    const start: usize = @intCast(offsets[logical_index]);
+    const size: usize = @intCast(sizes[logical_index]);
+    return formatArrowSequenceJson(
+        allocator,
+        schema.children[0] orelse return Error.QueryFailed,
+        array.children[0] orelse return Error.QueryFailed,
+        start,
+        start + size,
+    );
+}
+
+fn formatArrowFixedSizeList(
+    allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (schema.n_children != 1 or schema.children == null or array.n_children != 1 or array.children == null) {
+        return Error.QueryFailed;
+    }
+    const colon_index = std.mem.indexOfScalar(u8, format, ':') orelse return Error.QueryFailed;
+    const item_count = try std.fmt.parseInt(usize, format[colon_index + 1 ..], 10);
+    const start = row_index * item_count;
+    return formatArrowSequenceJson(
+        allocator,
+        schema.children[0] orelse return Error.QueryFailed,
+        array.children[0] orelse return Error.QueryFailed,
+        start,
+        start + item_count,
+    );
+}
+
+fn formatArrowStruct(
+    allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (schema.n_children != array.n_children or schema.children == null or array.children == null) {
+        return Error.QueryFailed;
+    }
+    var builder = std.ArrayList(u8).empty;
+    defer builder.deinit(allocator);
+
+    try builder.append(allocator, '{');
+    const child_count: usize = @intCast(schema.n_children);
+    for (0..child_count) |index| {
+        if (index != 0) try builder.appendSlice(allocator, ",");
+        const child_schema = schema.children[index] orelse return Error.QueryFailed;
+        const child_array = array.children[index] orelse return Error.QueryFailed;
+        try appendJsonQuoted(allocator, &builder, if (child_schema.name) |value| std.mem.span(value) else "");
+        try builder.appendSlice(allocator, ":");
+        try appendArrowJsonValue(allocator, &builder, child_schema, child_array, row_index);
+    }
+    try builder.append(allocator, '}');
+    return builder.toOwnedSlice(allocator);
+}
+
+fn formatArrowMap(
+    allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    if (schema.n_children != 1 or schema.children == null or array.n_children != 1 or array.children == null) {
+        return Error.QueryFailed;
+    }
+    if (array.buffers == null or array.buffers[1] == null) {
+        return Error.QueryFailed;
+    }
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const offsets: [*]const i32 = @ptrCast(@alignCast(array.buffers[1].?));
+    const start: usize = @intCast(offsets[logical_index]);
+    const end: usize = @intCast(offsets[logical_index + 1]);
+    return formatArrowSequenceJson(
+        allocator,
+        schema.children[0] orelse return Error.QueryFailed,
+        array.children[0] orelse return Error.QueryFailed,
+        start,
+        end,
+    );
+}
+
+fn formatArrowSequenceJson(
+    allocator: std.mem.Allocator,
+    child_schema: *ArrowSchema,
+    child_array: *ArrowArray,
+    start: usize,
+    end: usize,
+) ![]u8 {
+    var builder = std.ArrayList(u8).empty;
+    defer builder.deinit(allocator);
+
+    try builder.append(allocator, '[');
+    var index = start;
+    while (index < end) : (index += 1) {
+        if (index != start) try builder.appendSlice(allocator, ",");
+        try appendArrowJsonValue(allocator, &builder, child_schema, child_array, index);
+    }
+    try builder.append(allocator, ']');
+    return builder.toOwnedSlice(allocator);
+}
+
+fn appendArrowJsonValue(
+    allocator: std.mem.Allocator,
+    builder: *std.ArrayList(u8),
+    schema: *ArrowSchema,
+    array: *ArrowArray,
+    row_index: usize,
+) !void {
+    const cell = try cellFromArrow(allocator, schema, array, row_index);
+    defer allocator.free(cell.text);
+
+    if (cell.is_null) {
+        try builder.appendSlice(allocator, "null");
+        return;
+    }
+
+    switch (mapArrowSchemaToColumnType(schema)) {
+        .boolean, .int64, .float64, .decimal, .json, .array, .map, .struct_ => try builder.appendSlice(allocator, cell.text),
+        else => try appendJsonQuoted(allocator, builder, cell.text),
+    }
+}
+
+fn appendJsonQuoted(allocator: std.mem.Allocator, builder: *std.ArrayList(u8), value: []const u8) !void {
+    try builder.append(allocator, '"');
+    for (value) |byte| {
+        switch (byte) {
+            '"' => try builder.appendSlice(allocator, "\\\""),
+            '\\' => try builder.appendSlice(allocator, "\\\\"),
+            '\n' => try builder.appendSlice(allocator, "\\n"),
+            '\r' => try builder.appendSlice(allocator, "\\r"),
+            '\t' => try builder.appendSlice(allocator, "\\t"),
+            else => {
+                if (byte < 0x20) {
+                    var scratch: [6]u8 = undefined;
+                    const encoded = try std.fmt.bufPrint(&scratch, "\\u00{x:0>2}", .{byte});
+                    try builder.appendSlice(allocator, encoded);
+                } else {
+                    try builder.append(allocator, byte);
+                }
+            },
+        }
+    }
+    try builder.append(allocator, '"');
+}
+
+fn extractOpaqueValueText(
+    allocator: std.mem.Allocator,
+    schema: *ArrowSchema,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) !?[]u8 {
+    const typname = postgresTypeName(schema.metadata) orelse return null;
+    const bytes = try readArrowValueBytesForOpaque(format, array, row_index) orelse return null;
+
+    if (std.mem.eql(u8, typname, "uuid")) {
+        return try formatUuidBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "xml")) {
+        return try allocator.dupe(u8, bytes);
+    }
+    if (std.mem.eql(u8, typname, "inet") or std.mem.eql(u8, typname, "cidr")) {
+        return try formatPostgresInetBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "macaddr") or std.mem.eql(u8, typname, "macaddr8")) {
+        return try formatMacAddressBytes(allocator, bytes);
+    }
+    return null;
+}
+
+fn formatUuidBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len != 16) return Error.QueryFailed;
+    return std.fmt.allocPrint(
+        allocator,
+        "{x:0>2}{x:0>2}{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
+        .{ bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15] },
+    );
+}
+
+fn formatPostgresInetBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len < 4) return Error.QueryFailed;
+    const family = bytes[0];
+    const mask = bytes[1];
+    const is_cidr = bytes[2] != 0;
+    const size = bytes[3];
+    if (bytes.len != 4 + size) return Error.QueryFailed;
+
+    if (family == 2 and size == 4) {
+        const base = try std.fmt.allocPrint(allocator, "{}.{}.{}.{}", .{ bytes[4], bytes[5], bytes[6], bytes[7] });
+        defer allocator.free(base);
+        if (is_cidr or mask != 32) return std.fmt.allocPrint(allocator, "{s}/{}", .{ base, mask });
+        return allocator.dupe(u8, base);
+    }
+
+    if (family == 3 and size == 16) {
+        const base = try std.fmt.allocPrint(
+            allocator,
+            "{x:0>2}{x:0>2}:{x:0>2}{x:0>2}:{x:0>2}{x:0>2}:{x:0>2}{x:0>2}:{x:0>2}{x:0>2}:{x:0>2}{x:0>2}:{x:0>2}{x:0>2}:{x:0>2}{x:0>2}",
+            .{ bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19] },
+        );
+        defer allocator.free(base);
+        if (is_cidr or mask != 128) return std.fmt.allocPrint(allocator, "{s}/{}", .{ base, mask });
+        return allocator.dupe(u8, base);
+    }
+
+    return Error.QueryFailed;
+}
+
+fn formatMacAddressBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len != 6 and bytes.len != 8) return Error.QueryFailed;
+    var builder = std.ArrayList(u8).empty;
+    defer builder.deinit(allocator);
+
+    for (bytes, 0..) |byte, index| {
+        if (index != 0) try builder.append(allocator, ':');
+        const encoded = try std.fmt.allocPrint(allocator, "{x:0>2}", .{byte});
+        defer allocator.free(encoded);
+        try builder.appendSlice(allocator, encoded);
+    }
+    return builder.toOwnedSlice(allocator);
+}
+
+fn postgresTypeName(metadata: ?[*:0]const u8) ?[]const u8 {
+    return arrowMetadataValue(metadata, postgres_typname_key);
 }
 
 fn arrowExtensionName(metadata: ?[*:0]const u8) ?[]const u8 {
+    return arrowMetadataValue(metadata, arrow_extension_name_key);
+}
+
+fn arrowMetadataValue(metadata: ?[*:0]const u8, wanted_key: []const u8) ?[]const u8 {
     const metadata_ptr = metadata orelse return null;
     const bytes: [*]const u8 = @ptrCast(metadata_ptr);
     var offset: usize = 0;
@@ -1064,28 +1674,70 @@ fn arrowExtensionName(metadata: ?[*:0]const u8) ?[]const u8 {
         const value = bytes[offset .. offset + value_len];
         offset += value_len;
 
-        if (std.mem.eql(u8, key, "ARROW:extension:name")) {
-            return value;
-        }
+        if (std.mem.eql(u8, key, wanted_key)) return value;
+    }
+    return null;
+}
+fn mapArrowSchemaToColumnType(schema: *ArrowSchema) types.ColumnType {
+    if (schema.dictionary) |dictionary| {
+        return mapArrowSchemaToColumnType(dictionary);
     }
 
-    return null;
+    if (arrowExtensionName(schema.metadata)) |extension_name| {
+        if (std.mem.eql(u8, extension_name, "arrow.json")) return .json;
+        if (std.mem.eql(u8, extension_name, "arrow.uuid")) return .uuid;
+    }
+
+    if (postgresTypeName(schema.metadata)) |typname| {
+        if (std.mem.eql(u8, typname, "date")) return .date;
+        if (std.mem.eql(u8, typname, "time") or std.mem.eql(u8, typname, "timetz")) return .time;
+        if (std.mem.eql(u8, typname, "interval")) return .interval;
+        if (std.mem.eql(u8, typname, "uuid")) return .uuid;
+        if (std.mem.eql(u8, typname, "xml")) return .xml;
+        if (std.mem.eql(u8, typname, "inet") or std.mem.eql(u8, typname, "cidr") or std.mem.eql(u8, typname, "macaddr") or std.mem.eql(u8, typname, "macaddr8")) return .text;
+        if (std.mem.eql(u8, typname, "json") or std.mem.eql(u8, typname, "jsonb") or std.mem.eql(u8, typname, "jsonpath")) return .json;
+        if (typname.len > 0 and (typname[0] == '_' or std.mem.endsWith(u8, typname, "[]"))) return .array;
+    }
+
+    return mapArrowFormatToColumnType(if (schema.format) |fmt| std.mem.span(fmt) else "");
 }
 
 fn readArrowMetadataI32(bytes: [*]const u8, offset: *usize) ?i32 {
     const start = offset.*;
     const value_bytes: *const [@sizeOf(i32)]u8 = @ptrCast(bytes + start);
-    const value = std.mem.readInt(i32, value_bytes, .little);
+    const value = std.mem.readInt(i32, value_bytes, builtin.cpu.arch.endian());
     offset.* = start + @sizeOf(i32);
     return value;
 }
 
 fn mapArrowFormatToColumnType(format: []const u8) types.ColumnType {
     if (format.len == 0) return .unknown;
+    if (format[0] == '+') {
+        if (format.len < 2) return .unknown;
+        return switch (format[1]) {
+            'l', 'L', 'w' => .array,
+            'v' => if (format.len >= 3) switch (format[2]) {
+                'l', 'L' => .array,
+                else => .unknown,
+            } else .unknown,
+            's' => .struct_,
+            'm' => .map,
+            else => .unknown,
+        };
+    }
     if (format[0] == 'v' and format.len >= 2) {
         return switch (format[1]) {
             'u' => .text,
             'z' => .binary,
+            else => .unknown,
+        };
+    }
+    if (format[0] == 't' and format.len >= 2) {
+        return switch (format[1]) {
+            'd' => .date,
+            't' => .time,
+            's' => .timestamp,
+            'D', 'i' => .interval,
             else => .unknown,
         };
     }
@@ -1096,7 +1748,7 @@ fn mapArrowFormatToColumnType(format: []const u8) types.ColumnType {
         'u', 'U' => .text,
         'z', 'Z', 'w' => .binary,
         'd' => .decimal,
-        't', 'T' => .timestamp,
+        'T' => .timestamp,
         else => .unknown,
     };
 }
@@ -1169,12 +1821,9 @@ test "adbc backend reads dictionary encoded utf8 cell values" {
     try std.testing.expect(!second.is_null);
 }
 
-test "adbc backend recognizes arrow extension and view logical types" {
-    const key = "ARROW:extension:name";
-    const value = "arrow.json";
+fn buildSingleArrowMetadata(allocator: std.mem.Allocator, key: []const u8, value: []const u8) ![:0]u8 {
     const metadata_len = (@sizeOf(i32) * 3) + key.len + value.len;
-    var metadata = try std.testing.allocator.allocSentinel(u8, metadata_len, 0);
-    defer std.testing.allocator.free(metadata);
+    var metadata = try allocator.allocSentinel(u8, metadata_len, 0);
 
     var offset: usize = 0;
     std.mem.writeInt(i32, @ptrCast(metadata.ptr + offset), 1, .little);
@@ -1187,15 +1836,61 @@ test "adbc backend recognizes arrow extension and view logical types" {
     offset += @sizeOf(i32);
     @memcpy(metadata[offset .. offset + value.len], value);
 
+    return metadata;
+}
+
+test "adbc backend recognizes arrow extension and view logical types" {
+    const metadata = try buildSingleArrowMetadata(std.testing.allocator, arrow_extension_name_key, "arrow.json");
+    defer std.testing.allocator.free(metadata);
+
     var schema = ArrowSchema{
         .format = "u",
         .metadata = metadata.ptr,
     };
+    const uuid_metadata = try buildSingleArrowMetadata(std.testing.allocator, arrow_extension_name_key, "arrow.uuid");
+    defer std.testing.allocator.free(uuid_metadata);
+    var uuid_schema = ArrowSchema{
+        .format = "u",
+        .metadata = uuid_metadata.ptr,
+    };
 
     try std.testing.expectEqual(types.ColumnType.json, mapArrowSchemaToColumnType(&schema));
+    try std.testing.expectEqual(types.ColumnType.uuid, mapArrowSchemaToColumnType(&uuid_schema));
     try std.testing.expectEqual(types.ColumnType.text, mapArrowFormatToColumnType("vu"));
     try std.testing.expectEqual(types.ColumnType.binary, mapArrowFormatToColumnType("vz"));
+    try std.testing.expectEqual(types.ColumnType.date, mapArrowFormatToColumnType("tdD"));
+    try std.testing.expectEqual(types.ColumnType.time, mapArrowFormatToColumnType("ttu"));
+    try std.testing.expectEqual(types.ColumnType.interval, mapArrowFormatToColumnType("tin"));
+    try std.testing.expectEqual(types.ColumnType.array, mapArrowFormatToColumnType("+l"));
+    try std.testing.expectEqual(types.ColumnType.map, mapArrowFormatToColumnType("+m"));
+    try std.testing.expectEqual(types.ColumnType.struct_, mapArrowFormatToColumnType("+s"));
     try std.testing.expectEqual(types.ColumnType.float64, mapArrowFormatToColumnType("e"));
+}
+
+test "adbc backend recognizes PostgreSQL typname metadata overrides" {
+    const uuid_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "uuid");
+    defer std.testing.allocator.free(uuid_metadata);
+    var uuid_schema = ArrowSchema{
+        .format = "w:16",
+        .metadata = uuid_metadata.ptr,
+    };
+    try std.testing.expectEqual(types.ColumnType.uuid, mapArrowSchemaToColumnType(&uuid_schema));
+
+    const inet_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "inet");
+    defer std.testing.allocator.free(inet_metadata);
+    var inet_schema = ArrowSchema{
+        .format = "z",
+        .metadata = inet_metadata.ptr,
+    };
+    try std.testing.expectEqual(types.ColumnType.text, mapArrowSchemaToColumnType(&inet_schema));
+
+    const array_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "_int4");
+    defer std.testing.allocator.free(array_metadata);
+    var array_schema = ArrowSchema{
+        .format = "+l",
+        .metadata = array_metadata.ptr,
+    };
+    try std.testing.expectEqual(types.ColumnType.array, mapArrowSchemaToColumnType(&array_schema));
 }
 
 fn freeColumns(allocator: std.mem.Allocator, columns: []const types.ColumnMetadata) void {

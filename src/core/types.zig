@@ -19,6 +19,14 @@ pub const ColumnType = enum(i32) {
     decimal = 6,
     timestamp = 7,
     json = 8,
+    date = 9,
+    time = 10,
+    interval = 11,
+    uuid = 12,
+    xml = 13,
+    array = 14,
+    map = 15,
+    struct_ = 16,
 };
 
 pub const ColumnMetadata = struct {
