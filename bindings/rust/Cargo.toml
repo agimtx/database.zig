@@ -16,3 +16,11 @@ path = "../../tests/rust/test_value_conversion.rs"
 [[test]]
 name = "test_duckdb"
 path = "../../tests/rust/test_duckdb.rs"
+
+[[test]]
+name = "test_postgres"
+path = "../../tests/rust/test_postgres.rs"
+
+[[test]]
+name = "test_starrocks"
+path = "../../tests/rust/test_starrocks.rs"

@@ -18,12 +18,18 @@ database.zig is a database connection management library scaffold that uses Zig 
 ├── bindings/
 │   ├── c/
 │   │   └── include/
+│   ├── rust/
+│   │   └── src/
 │   ├── nodejs/
 │   │   └── src/
 │   └── python/
 │       └── aq_database/
 ├── docs/
 │   └── architecture.md
+├── tests/
+│   ├── nodejs/
+│   ├── python/
+│   └── rust/
 └── src/
     ├── core/
     └── ffi/
@@ -87,6 +93,72 @@ On macOS, some third-party drivers may also require setting `DYLD_LIBRARY_PATH` 
 zig build
 zig build shared
 zig build test
+```
+
+## Testing
+
+### Zig Core Unit Tests
+
+Run the Zig unit tests for the control plane and C ABI surface:
+
+```bash
+zig build test
+```
+
+### Binding Unit Tests
+
+These commands cover database-independent binding behavior such as value conversion and local wrapper logic.
+
+Python:
+
+```bash
+python -m unittest tests.python.test_value_conversion
+```
+
+Node.js:
+
+```bash
+cd bindings/nodejs && npm install
+npm --prefix bindings/nodejs exec tsx -- --test ../../tests/nodejs/test_value_conversion.test.ts
+```
+
+Rust:
+
+```bash
+cargo test --manifest-path bindings/rust/Cargo.toml --lib
+cargo test --manifest-path bindings/rust/Cargo.toml --test test_value_conversion
+```
+
+### Binding Integration Tests
+
+Database-backed binding tests read connection settings from the repository `.env` file by default. The file uses INI-style sections such as `[postgres]` and `[starrocks]`.
+
+Run all Python binding tests:
+
+```bash
+python -m unittest discover -s tests/python -p 'test_*.py'
+```
+
+Run all Node.js binding tests:
+
+```bash
+cd bindings/nodejs && npm install
+npm --prefix bindings/nodejs run typecheck:tests
+npm --prefix bindings/nodejs run test:node
+```
+
+Run all Rust binding tests:
+
+```bash
+zig build shared
+cargo test --manifest-path bindings/rust/Cargo.toml
+```
+
+To narrow integration coverage to one configured database section, set `DATABASE_ZIG_TEST_SECTION`, for example:
+
+```bash
+DATABASE_ZIG_TEST_SECTION=postgres cargo test --manifest-path bindings/rust/Cargo.toml --test test_postgres -- --nocapture
+DATABASE_ZIG_TEST_SECTION=starrocks python -m unittest tests.python.test_starrocks
 ```
 
 ## Recommended Next Steps
