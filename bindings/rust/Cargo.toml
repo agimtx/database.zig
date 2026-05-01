@@ -44,3 +44,15 @@ path = "../../tests/rust/test_clickhouse.rs"
 [[test]]
 name = "test_exasol"
 path = "../../tests/rust/test_exasol.rs"
+
+[[test]]
+name = "test_bigquery"
+path = "../../tests/rust/test_bigquery.rs"
+
+[[test]]
+name = "test_mssql"
+path = "../../tests/rust/test_mssql.rs"
+
+[[test]]
+name = "test_databricks"
+path = "../../tests/rust/test_databricks.rs"
