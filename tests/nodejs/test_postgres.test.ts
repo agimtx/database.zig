@@ -285,6 +285,13 @@ async function runPostgresLifecycleTest(): Promise<void> {
           await databasesResult.close();
         }
 
+        const catalogsResult = await databaseConnection.getCatalogs();
+        try {
+          assert.ok(readResultSetValues(catalogsResult, 0).includes(databaseName));
+        } finally {
+          await catalogsResult.close();
+        }
+
         const tablesResult = await databaseConnection.getTables(null, "public");
         try {
           assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));

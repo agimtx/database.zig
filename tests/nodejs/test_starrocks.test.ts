@@ -214,6 +214,11 @@ async function runStarRocksLifecycleTest(): Promise<void> {
           await databasesResult.close();
         }
 
+        await assert.rejects(
+          databaseConnection.getCatalogs(),
+          (error) => assertErrorMessage(error, /get catalogs is not supported/i),
+        );
+
         const tablesResult = await databaseConnection.getTables(null, databaseName);
         try {
           assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));

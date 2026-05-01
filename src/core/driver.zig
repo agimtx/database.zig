@@ -68,6 +68,12 @@ pub const GetTablesFn = *const fn (
     options: types.GetTablesOptions,
 ) anyerror!*ResultSetHandle;
 
+pub const GetCatalogsFn = *const fn (
+    allocator: std.mem.Allocator,
+    handle: *ConnectionHandle,
+    result_set_id: u64,
+) anyerror!*ResultSetHandle;
+
 pub const GetDatabasesFn = *const fn (
     allocator: std.mem.Allocator,
     handle: *ConnectionHandle,
@@ -107,6 +113,7 @@ pub const DriverSpec = struct {
     execute: ExecuteSqlFn,
     close_result_set: CloseResultSetFn,
     get_tables: GetTablesFn,
+    get_catalogs: GetCatalogsFn,
     get_databases: GetDatabasesFn,
     inspect_namespace_access: InspectNamespaceAccessFn,
     open_cursor: OpenCursorFn,
@@ -162,6 +169,18 @@ const stub_table_row_values = [_]types.ResultCell{
 
 const stub_table_rows = [_]types.ResultRow{
     .{ .values = stub_table_row_values[0..] },
+};
+
+const stub_catalog_columns = [_]types.ColumnMetadata{
+    .{ .name = "catalog_name", .column_type = .text, .nullable = false },
+};
+
+const stub_catalog_row_values = [_]types.ResultCell{
+    .{ .text = "main_catalog", .is_null = false },
+};
+
+const stub_catalog_rows = [_]types.ResultRow{
+    .{ .values = stub_catalog_row_values[0..] },
 };
 
 const stub_database_columns = [_]types.ColumnMetadata{
@@ -235,6 +254,23 @@ pub fn stubGetTables(
         .connection_id = handle.id,
         .columns = stub_table_columns[0..],
         .rows = stub_table_rows[0..],
+        .row_count = 1,
+        .affected_rows = 1,
+    };
+    return result_set;
+}
+
+pub fn stubGetCatalogs(
+    allocator: std.mem.Allocator,
+    handle: *ConnectionHandle,
+    result_set_id: u64,
+) !*ResultSetHandle {
+    const result_set = try allocator.create(ResultSetHandle);
+    result_set.* = .{
+        .id = result_set_id,
+        .connection_id = handle.id,
+        .columns = stub_catalog_columns[0..],
+        .rows = stub_catalog_rows[0..],
         .row_count = 1,
         .affected_rows = 1,
     };

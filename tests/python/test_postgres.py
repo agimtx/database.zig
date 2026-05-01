@@ -263,6 +263,12 @@ class PostgresBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     finally:
                         await databases_result.close_async()
 
+                    catalogs_result = await database_connection.get_catalogs_async()
+                    try:
+                        self.assertIn(database_name, read_result_set_values(catalogs_result, 0))
+                    finally:
+                        await catalogs_result.close_async()
+
                     tables_result = await database_connection.get_tables_async(database="public")
                     try:
                         self.assertIn(table_name, read_result_set_values(tables_result, 2))

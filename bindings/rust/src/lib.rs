@@ -356,6 +356,7 @@ struct Api {
     aq_connection_execute_async: unsafe extern "C" fn(*mut c_void, u64, *const c_char) -> u64,
     aq_connection_test: unsafe extern "C" fn(*mut c_void, u64, *mut u8) -> i32,
     aq_connection_get_tables: unsafe extern "C" fn(*mut c_void, u64, *const c_char, *const c_char) -> u64,
+    aq_connection_get_catalogs: unsafe extern "C" fn(*mut c_void, u64) -> u64,
     aq_connection_get_databases: unsafe extern "C" fn(*mut c_void, u64) -> u64,
     aq_connection_get_database: unsafe extern "C" fn(*mut c_void, u64) -> u64,
     aq_connection_inspect_namespace_access: unsafe extern "C" fn(*mut c_void, u64, *const c_char, *const c_char, *mut AqNamespaceAccess) -> i32,
@@ -388,6 +389,7 @@ impl Api {
         let aq_connection_execute_async = unsafe { library.symbol("aq_connection_execute_async")? };
         let aq_connection_test = unsafe { library.symbol("aq_connection_test")? };
         let aq_connection_get_tables = unsafe { library.symbol("aq_connection_get_tables")? };
+        let aq_connection_get_catalogs = unsafe { library.symbol("aq_connection_get_catalogs")? };
         let aq_connection_get_databases = unsafe { library.symbol("aq_connection_get_databases")? };
         let aq_connection_get_database = unsafe { library.symbol("aq_connection_get_database")? };
         let aq_connection_inspect_namespace_access = unsafe { library.symbol("aq_connection_inspect_namespace_access")? };
@@ -417,6 +419,7 @@ impl Api {
             aq_connection_execute_async,
             aq_connection_test,
             aq_connection_get_tables,
+            aq_connection_get_catalogs,
             aq_connection_get_databases,
             aq_connection_get_database,
             aq_connection_inspect_namespace_access,
@@ -633,6 +636,16 @@ impl Connection {
         };
         if result_set_id == 0 {
             return Err(self.inner.zero_result_error("aq_connection_get_tables"));
+        }
+        Ok(ResultSet::new(self.inner.clone(), result_set_id))
+    }
+
+    pub fn get_catalogs(&self) -> Result<ResultSet> {
+        let result_set_id = unsafe {
+            (self.inner.api.aq_connection_get_catalogs)(self.inner.handle, self.open_id()?)
+        };
+        if result_set_id == 0 {
+            return Err(self.inner.zero_result_error("aq_connection_get_catalogs"));
         }
         Ok(ResultSet::new(self.inner.clone(), result_set_id))
     }

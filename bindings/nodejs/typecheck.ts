@@ -10,6 +10,7 @@ const resultSet = connection.executeSync("select 1");
 const resultSetPromise: Promise<aqDatabase.ResultSet> = connection.execute("select 1");
 const cursorPromise: Promise<aqDatabase.Cursor> = connection.cursor("select 1");
 const isHealthy: Promise<boolean> = connection.test();
+const catalogs: Promise<aqDatabase.ResultSet> = connection.getCatalogs();
 const tables: Promise<aqDatabase.ResultSet> = connection.getTables(null, "main");
 const namespaceAccess: Promise<aqDatabase.NamespaceAccess> = connection.inspectNamespaceAccess(null, "main");
 
@@ -25,6 +26,7 @@ void connectionPromise;
 void resultSetPromise;
 void cursorPromise;
 void isHealthy;
+void catalogs;
 void tables;
 void namespaceAccess;
 void firstColumn;

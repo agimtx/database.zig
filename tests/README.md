@@ -5,10 +5,27 @@ This directory contains binding-level tests for the Python, Node.js, and Rust wr
 ## Configuration
 
 - Database-backed integration tests read connection settings from the repository `.env` file by default.
-- The `.env` file uses INI-style sections such as `[postgres]` or `[starrocks]`.
+- The `.env` file uses INI-style sections such as `[postgres]`, `[postgres_flightsql]`, or `[starrocks]`.
 - Python, Node.js, and Rust each keep one file per database, named like `test_postgres` and `test_starrocks`.
 - Use `DATABASE_ZIG_TEST_SECTION` to run only one database-specific test file.
 - Use `DATABASE_ZIG_TEST_ENV_FILE` to override the config file path.
+- For Flight SQL-backed PostgreSQL tests, prefer an explicit `dsn=` entry in `[postgres_flightsql]` when the server needs parameters beyond a plain `flightsql://host:port/database` URI.
+
+Example template:
+
+```ini
+[postgres_flightsql]
+# Preferred when auth, TLS, or extra query parameters are required:
+dsn=flightsql://user:password@127.0.0.1:8815/postgres?useEncryption=false
+
+# Or use structured fields instead of dsn:
+# scheme=flightsql
+# host=127.0.0.1
+# port=8815
+# database=postgres
+# user=postgres
+# password=secret
+```
 
 ## Run All Binding Tests
 
@@ -101,5 +118,6 @@ To run a single configured integration test target, for example:
 
 ```bash
 DATABASE_ZIG_TEST_SECTION=postgres cargo test --manifest-path bindings/rust/Cargo.toml --test test_postgres -- --nocapture
+DATABASE_ZIG_TEST_SECTION=postgres_flightsql cargo test --manifest-path bindings/rust/Cargo.toml --test test_postgres_flightsql -- --nocapture
 DATABASE_ZIG_TEST_SECTION=starrocks cargo test --manifest-path bindings/rust/Cargo.toml --test test_starrocks -- --nocapture
 ```

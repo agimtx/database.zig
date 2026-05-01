@@ -53,6 +53,10 @@ export fn aq_connection_get_tables(
     return ffi.aq_connection_get_tables(raw_manager, connection_id, catalog, database);
 }
 
+export fn aq_connection_get_catalogs(raw_manager: ?*anyopaque, connection_id: u64) u64 {
+    return ffi.aq_connection_get_catalogs(raw_manager, connection_id);
+}
+
 export fn aq_connection_get_databases(raw_manager: ?*anyopaque, connection_id: u64) u64 {
     return ffi.aq_connection_get_databases(raw_manager, connection_id);
 }

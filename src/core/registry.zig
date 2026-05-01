@@ -44,6 +44,7 @@ pub const DriverRegistry = struct {
                 .execute = adbc_backend.execute,
                 .close_result_set = adbc_backend.closeResultSet,
                 .get_tables = adbc_backend.getTables,
+                .get_catalogs = adbc_backend.getCatalogs,
                 .get_databases = adbc_backend.getDatabases,
                 .inspect_namespace_access = adbc_backend.inspectNamespaceAccess,
                 .open_cursor = adbc_backend.openCursor,

@@ -22,5 +22,9 @@ name = "test_postgres"
 path = "../../tests/rust/test_postgres.rs"
 
 [[test]]
+name = "test_postgres_flightsql"
+path = "../../tests/rust/test_postgres_flightsql.rs"
+
+[[test]]
 name = "test_starrocks"
 path = "../../tests/rust/test_starrocks.rs"

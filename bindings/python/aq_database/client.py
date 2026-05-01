@@ -297,6 +297,12 @@ class Connection:
     async def test_async(self) -> bool:
         return await self._manager._connection_test_async(self.id)
 
+    def get_catalogs(self) -> ResultSet:
+        return self._manager._get_catalogs(self.id)
+
+    async def get_catalogs_async(self) -> ResultSet:
+        return await self._manager._get_catalogs_async(self.id)
+
     def get_databases(self) -> ResultSet:
         return self._manager._get_databases(self.id)
 
@@ -408,6 +414,8 @@ class ConnectionManager:
         self._lib.aq_connection_execute_async.restype = ctypes.c_uint64
         self._lib.aq_connection_get_tables.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p]
         self._lib.aq_connection_get_tables.restype = ctypes.c_uint64
+        self._lib.aq_connection_get_catalogs.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self._lib.aq_connection_get_catalogs.restype = ctypes.c_uint64
         self._lib.aq_connection_get_databases.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
         self._lib.aq_connection_get_databases.restype = ctypes.c_uint64
         self._lib.aq_connection_inspect_namespace_access.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(_CNamespaceAccess)]
@@ -473,6 +481,15 @@ class ConnectionManager:
 
     async def _connection_test_async(self, connection_id: int) -> bool:
         return await asyncio.to_thread(self._connection_test, connection_id)
+
+    def _get_catalogs(self, connection_id: int) -> ResultSet:
+        result_set_id = self._lib.aq_connection_get_catalogs(self._manager, connection_id)
+        if result_set_id == 0:
+            self._raise_on_zero_result("aq_connection_get_catalogs")
+        return ResultSet(self, int(result_set_id))
+
+    async def _get_catalogs_async(self, connection_id: int) -> ResultSet:
+        return await asyncio.to_thread(self._get_catalogs, connection_id)
 
     def _get_databases(self, connection_id: int) -> ResultSet:
         result_set_id = self._lib.aq_connection_get_databases(self._manager, connection_id)

@@ -125,6 +125,7 @@ uint64_t aq_connection_execute(void *manager, uint64_t connection_id, const char
 uint64_t aq_connection_execute_async(void *manager, uint64_t connection_id, const char *sql);
 int32_t aq_connection_test(void *manager, uint64_t connection_id, uint8_t *out_ok);
 uint64_t aq_connection_get_tables(void *manager, uint64_t connection_id, const char *catalog, const char *database);
+uint64_t aq_connection_get_catalogs(void *manager, uint64_t connection_id);
 uint64_t aq_connection_get_databases(void *manager, uint64_t connection_id);
 uint64_t aq_connection_get_database(void *manager, uint64_t connection_id);
 int32_t aq_connection_inspect_namespace_access(void *manager, uint64_t connection_id, const char *catalog, const char *database, struct aq_namespace_access *out_access);

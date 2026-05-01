@@ -373,6 +373,29 @@ pub const ConnectionManager = struct {
         return result_set;
     }
 
+    pub fn getCatalogs(self: *ConnectionManager, connection_id: u64) !*driver.ResultSetHandle {
+        self.state_lock.lock();
+        defer self.state_lock.unlock();
+
+        const entry = self.connections.get(connection_id) orelse {
+            return ConnectionError.ConnectionNotFound;
+        };
+        const spec = self.registry.resolve(entry.kind) orelse {
+            return ConnectionError.DriverNotRegistered;
+        };
+
+        const result_set_id = self.next_result_set_id;
+        self.next_result_set_id += 1;
+
+        const result_set = try spec.get_catalogs(self.allocator, entry.handle, result_set_id);
+        try self.result_sets.put(result_set_id, .{
+            .kind = entry.kind,
+            .handle = result_set,
+        });
+
+        return result_set;
+    }
+
     pub fn getDatabases(self: *ConnectionManager, connection_id: u64) !*driver.ResultSetHandle {
         self.state_lock.lock();
         defer self.state_lock.unlock();
@@ -930,6 +953,13 @@ test "manager exposes test and metadata discovery contracts" {
     try std.testing.expect((try manager.resultSetRowCount(databases.id)) >= 1);
     const listed_database = try manager.resultSetCell(databases.id, 0, 0);
     try std.testing.expectEqualStrings("main", listed_database.text);
+
+    try std.testing.expectError(error.InvalidArgument, manager.getCatalogs(connection.id));
+    if (manager.last_error_message) |message| {
+        try std.testing.expect(std.mem.indexOf(u8, message, "get catalogs is not supported") != null);
+    } else {
+        return error.TestUnexpectedResult;
+    }
 
     const access = try manager.inspectNamespaceAccess(connection.id, .{ .database = "main" });
     try std.testing.expect(!access.can_get_schema);

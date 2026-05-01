@@ -188,6 +188,9 @@ class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     finally:
                         await databases_result.close_async()
 
+                    with self.assertRaisesRegex(RuntimeError, "get catalogs is not supported"):
+                        await database_connection.get_catalogs_async()
+
                     tables_result = await database_connection.get_tables_async(database=database_name)
                     try:
                         self.assertIn(table_name, read_result_set_values(tables_result, 2))

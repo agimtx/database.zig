@@ -94,6 +94,11 @@ fn rust_binding_postgres_lifecycle() {
             assert!(database_names.contains(&Value::Text(database_name.clone())));
             databases_result.close()?;
 
+            let catalogs_result = database_connection.get_catalogs()?;
+            let catalog_names = read_values(&catalogs_result, 0)?;
+            assert!(catalog_names.contains(&Value::Text(database_name.clone())));
+            catalogs_result.close()?;
+
             let tables_result = database_connection.get_tables(None, Some("public"))?;
             let table_names = read_values(&tables_result, 2)?;
             assert!(table_names.contains(&Value::Text(table_name.clone())));

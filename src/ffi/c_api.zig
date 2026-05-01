@@ -348,6 +348,17 @@ pub fn aq_connection_get_tables(
     return result_set.id;
 }
 
+pub fn aq_connection_get_catalogs(raw_manager: ?*anyopaque, connection_id: u64) u64 {
+    const manager = castManager(raw_manager) orelse return 0;
+    clearManagerError(manager);
+
+    const result_set = manager.getCatalogs(connection_id) catch |err| {
+        setManagerError(manager, err);
+        return 0;
+    };
+    return result_set.id;
+}
+
 pub fn aq_connection_get_databases(raw_manager: ?*anyopaque, connection_id: u64) u64 {
     const manager = castManager(raw_manager) orelse return 0;
     clearManagerError(manager);
@@ -836,4 +847,30 @@ test "c api exposes namespace access metadata" {
     try std.testing.expectEqual(@as(usize, 1), access.qualified_name.part_count);
     try std.testing.expectEqualStrings("main", textFromPointer(access.qualified_name.parts[0].value_ptr, access.qualified_name.parts[0].value_len));
     try std.testing.expectEqual(@as(usize, 0), access.qualified_name.formatted_len);
+}
+
+test "c api reports unsupported get catalogs metadata" {
+    if (!adbc_backend.sqliteDriverUsable(std.testing.allocator)) {
+        return error.SkipZigTest;
+    }
+
+    const raw_manager = aq_manager_create() orelse return error.OutOfMemory;
+    defer aq_manager_destroy(raw_manager);
+
+    const dsn = try adbc_backend.testSqliteDsn(std.testing.allocator);
+    defer std.testing.allocator.free(dsn);
+    const dsn_z = try std.testing.allocator.dupeZ(u8, dsn);
+    defer std.testing.allocator.free(dsn_z);
+
+    const connection_id = aq_connection_open(raw_manager, 1, dsn_z.ptr);
+    try std.testing.expect(connection_id != 0);
+    defer {
+        std.testing.expectEqual(aq_ok, aq_connection_close(raw_manager, connection_id)) catch unreachable;
+    }
+
+    try std.testing.expectEqual(@as(u64, 0), aq_connection_get_catalogs(raw_manager, connection_id));
+
+    var error_message = AqErrorMessage{ .message_ptr = null, .message_len = 0 };
+    try std.testing.expectEqual(aq_ok, aq_last_error_message(raw_manager, &error_message));
+    try std.testing.expect(std.mem.indexOf(u8, textFromPointer(error_message.message_ptr, error_message.message_len), "get catalogs is not supported") != null);
 }

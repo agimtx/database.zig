@@ -87,6 +87,12 @@ fn rust_binding_starrocks_lifecycle() {
             assert!(database_names.contains(&Value::Text(database_name.clone())));
             databases_result.close()?;
 
+            let catalogs_error = match database_connection.get_catalogs() {
+                Ok(_) => panic!("starrocks/mysql-compatible targets should reject get_catalogs"),
+                Err(error) => error,
+            };
+            assert!(catalogs_error.to_string().contains("get catalogs is not supported"));
+
             let tables_result = database_connection.get_tables(None, Some(&database_name))?;
             let table_names = read_values(&tables_result, 2)?;
             assert!(table_names.contains(&Value::Text(table_name.clone())));

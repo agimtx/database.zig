@@ -121,6 +121,8 @@ declare namespace aqDatabase {
     execute(sql: string): Promise<ResultSet>;
     testSync(): boolean;
     test(): Promise<boolean>;
+    getCatalogsSync(): ResultSet;
+    getCatalogs(): Promise<ResultSet>;
     getDatabasesSync(): ResultSet;
     getDatabases(): Promise<ResultSet>;
     getTablesSync(catalog?: string | null, database?: string | null): ResultSet;

@@ -332,6 +332,7 @@ class ConnectionManager {
       aq_connection_execute: ["uint64", ["pointer", "uint64", "string"]],
       aq_connection_execute_async: ["uint64", ["pointer", "uint64", "string"]],
       aq_connection_get_tables: ["uint64", ["pointer", "uint64", "string", "string"]],
+      aq_connection_get_catalogs: ["uint64", ["pointer", "uint64"]],
       aq_connection_get_databases: ["uint64", ["pointer", "uint64"]],
       aq_connection_inspect_namespace_access: ["int32", ["pointer", "uint64", "string", "string", "pointer"]],
       aq_result_set_close: ["int32", ["pointer", "uint64"]],
@@ -447,6 +448,24 @@ class ConnectionManager {
     const status = await callAsync(this.lib.aq_connection_test, [this.manager, connectionId, out]);
     this._raiseOnStatus(status, "aq_connection_test");
     return out.readUInt8(0) === 1;
+  }
+
+  _getCatalogsSync(connectionId) {
+    const resultSetId = this.lib.aq_connection_get_catalogs(this.manager, connectionId);
+    if (resultSetId === 0 || resultSetId === 0n) {
+      this._throwZeroResult("aq_connection_get_catalogs");
+    }
+
+    return new ResultSet(this, Number(resultSetId));
+  }
+
+  async _getCatalogs(connectionId) {
+    const resultSetId = await callAsync(this.lib.aq_connection_get_catalogs, [this.manager, connectionId]);
+    if (resultSetId === 0 || resultSetId === 0n) {
+      this._throwZeroResult("aq_connection_get_catalogs");
+    }
+
+    return new ResultSet(this, Number(resultSetId));
   }
 
   _getDatabasesSync(connectionId) {
@@ -679,6 +698,14 @@ class Connection {
 
   async test() {
     return this.manager._connectionTest(this.id);
+  }
+
+  getCatalogsSync() {
+    return this.manager._getCatalogsSync(this.id);
+  }
+
+  async getCatalogs() {
+    return this.manager._getCatalogs(this.id);
   }
 
   getDatabasesSync() {

@@ -326,6 +326,17 @@ pub fn getTables(
     return result_set;
 }
 
+pub fn getCatalogs(
+    allocator: std.mem.Allocator,
+    handle: *driver.ConnectionHandle,
+    result_set_id: u64,
+) !*driver.ResultSetHandle {
+    const context = connectionContext(handle);
+    const sql = try buildGetCatalogsSql(allocator, context.vendor_name);
+    defer allocator.free(sql);
+    return execute(allocator, handle, result_set_id, sql);
+}
+
 pub fn getDatabases(
     allocator: std.mem.Allocator,
     handle: *driver.ConnectionHandle,
@@ -2694,6 +2705,27 @@ fn buildGetDatabasesSql(allocator: std.mem.Allocator, vendor_name: []const u8) !
     return allocator.dupe(u8, "select schema_name as database_name from information_schema.schemata order by schema_name");
 }
 
+fn buildGetCatalogsSql(allocator: std.mem.Allocator, vendor_name: []const u8) ![]u8 {
+    if (std.mem.eql(u8, vendor_name, "postgresql") or std.mem.eql(u8, vendor_name, "redshift")) {
+        return allocator.dupe(u8, "select datname as catalog_name from pg_database where datistemplate = false order by datname");
+    }
+
+    if (std.mem.eql(u8, vendor_name, "duckdb") or
+        std.mem.eql(u8, vendor_name, "snowflake") or
+        std.mem.eql(u8, vendor_name, "mssql") or
+        std.mem.eql(u8, vendor_name, "trino") or
+        std.mem.eql(u8, vendor_name, "databricks") or
+        std.mem.eql(u8, vendor_name, "bigquery"))
+    {
+        return allocator.dupe(
+            u8,
+            "select distinct catalog_name from information_schema.schemata where catalog_name is not null and catalog_name <> '' order by catalog_name",
+        );
+    }
+
+    return unsupportedMetadataOperation("get catalogs", vendor_name);
+}
+
 fn hasCatalogAccess(
     allocator: std.mem.Allocator,
     context: *ConnectionContext,
@@ -2723,6 +2755,22 @@ fn queryReturnsRows(
     const consumed = try executeStatement(allocator, context, sql);
     defer consumed.deinit(allocator);
     return consumed.row_count != 0;
+}
+
+fn unsupportedMetadataOperation(operation_name: []const u8, vendor_name: []const u8) Error {
+    const message = std.fmt.allocPrint(
+        std.heap.page_allocator,
+        "{s} is not supported for vendor '{s}'",
+        .{ operation_name, vendor_name },
+    ) catch null;
+    defer if (message) |owned| std.heap.page_allocator.free(owned);
+
+    if (message) |owned| {
+        setLastDriverErrorMessage(owned);
+    } else {
+        setLastDriverErrorMessage("metadata operation is not supported for this vendor");
+    }
+    return Error.InvalidArgument;
 }
 
 fn buildCatalogAccessSql(
@@ -3080,6 +3128,32 @@ pub fn takeLastDriverErrorMessage(allocator: std.mem.Allocator) ?[]u8 {
 fn setLastDriverErrorMessage(message: []const u8) void {
     clearLastDriverErrorMessage();
     last_driver_error_message = std.heap.page_allocator.dupe(u8, message) catch null;
+}
+
+test "adbc backend builds get catalogs SQL for supported vendors" {
+    const postgres_sql = try buildGetCatalogsSql(std.testing.allocator, "postgresql");
+    defer std.testing.allocator.free(postgres_sql);
+    try std.testing.expectEqualStrings(
+        "select datname as catalog_name from pg_database where datistemplate = false order by datname",
+        postgres_sql,
+    );
+
+    const duckdb_sql = try buildGetCatalogsSql(std.testing.allocator, "duckdb");
+    defer std.testing.allocator.free(duckdb_sql);
+    try std.testing.expectEqualStrings(
+        "select distinct catalog_name from information_schema.schemata where catalog_name is not null and catalog_name <> '' order by catalog_name",
+        duckdb_sql,
+    );
+}
+
+test "adbc backend rejects get catalogs for unsupported vendors" {
+    clearLastDriverErrorMessage();
+    defer clearLastDriverErrorMessage();
+
+    try std.testing.expectError(error.InvalidArgument, buildGetCatalogsSql(std.testing.allocator, "sqlite"));
+    const message = takeLastDriverErrorMessage(std.testing.allocator) orelse return error.TestUnexpectedResult;
+    defer std.testing.allocator.free(message);
+    try std.testing.expect(std.mem.indexOf(u8, message, "get catalogs is not supported for vendor 'sqlite'") != null);
 }
 
 fn releaseError(error_info: *AdbcError) void {
