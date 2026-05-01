@@ -76,11 +76,54 @@ runtime_packages_for_driver() {
     conda_subdir="$2"
 
     case "${driver}:${conda_subdir}" in
-        duckdb:osx-arm64|duckdb:osx-64) echo "icu=75.1" ;;
+        duckdb:osx-arm64|duckdb:osx-64|duckdb:linux-aarch64|duckdb:linux-64) echo "icu=75.1" ;;
         postgresql:win-64) echo "libpq openssl krb5 cyrus-sasl" ;;
         postgresql:*) echo "libpq openssl krb5 openldap cyrus-sasl" ;;
         *) return 1 ;;
     esac
+}
+
+duckdb_runtime_dependency_patterns() {
+    host_tag="$1"
+
+    case "${host_tag}" in
+        macos-*)
+            printf '%s\n' \
+                'libicui18n*.dylib' \
+                'libicuuc*.dylib' \
+                'libicudata*.dylib'
+            ;;
+        linux-*)
+            printf '%s\n' \
+                'libicui18n.so*' \
+                'libicuuc.so*' \
+                'libicudata.so*'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+duckdb_runtime_dependencies_present() {
+    lib_dir="$1"
+    host_tag="$2"
+
+    patterns=$(duckdb_runtime_dependency_patterns "${host_tag}" 2>/dev/null) || return 1
+
+    # shellcheck disable=SC2086
+    all_patterns_present "${lib_dir}" ${patterns}
+}
+
+copy_duckdb_runtime_dependencies() {
+    temp_prefix="$1"
+    lib_dir="$2"
+    host_tag="$3"
+
+    patterns=$(duckdb_runtime_dependency_patterns "${host_tag}" 2>/dev/null) || return 0
+
+    # shellcheck disable=SC2086
+    copy_matching_runtime_files "${temp_prefix}/lib" "${lib_dir}" ${patterns}
 }
 
 library_basename_for_driver() {
@@ -170,15 +213,7 @@ driver_dependency_bundle_ready() {
 
     case "$driver" in
         duckdb)
-            case "${host_tag}" in
-                macos-*)
-                    all_patterns_present "${lib_dir}" \
-                        'libicui18n*.dylib' \
-                        'libicuuc*.dylib' \
-                        'libicudata*.dylib'
-                    ;;
-                *) return 1 ;;
-            esac
+            duckdb_runtime_dependencies_present "${lib_dir}" "${host_tag}"
             ;;
         postgresql)
             case "${host_tag}" in
@@ -253,14 +288,7 @@ driver_artifacts_ready() {
 
     case "$driver" in
         duckdb)
-            case "${host_tag}" in
-                macos-*)
-                    all_patterns_present "${lib_dir}" \
-                        'libicui18n*.dylib' \
-                        'libicuuc*.dylib' \
-                        'libicudata*.dylib'
-                    ;;
-            esac
+            duckdb_runtime_dependencies_present "${lib_dir}" "${host_tag}"
             ;;
         postgresql)
             case "${host_tag}" in
@@ -384,14 +412,7 @@ copy_runtime_dependencies() {
 
     case "$driver" in
         duckdb)
-            case "${host_tag}" in
-                macos-*)
-                    copy_matching_runtime_files "${temp_prefix}/lib" "${lib_dir}" \
-                        'libicui18n*.dylib' \
-                        'libicuuc*.dylib' \
-                        'libicudata*.dylib'
-                    ;;
-            esac
+            copy_duckdb_runtime_dependencies "${temp_prefix}" "${lib_dir}" "${host_tag}"
             ;;
         postgresql)
             case "${host_tag}" in
