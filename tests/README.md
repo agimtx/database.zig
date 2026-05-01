@@ -29,5 +29,6 @@ cd bindings/nodejs && npm install
 Run from the repository root:
 
 ```bash
-node --test tests/nodejs/*.test.js
+npm --prefix bindings/nodejs run typecheck:tests
+npm --prefix bindings/nodejs run test:node
 ```

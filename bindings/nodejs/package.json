@@ -3,9 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "files": [
+    "src/index.js",
+    "src/index.d.ts"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:tests": "tsc --noEmit -p ../../tests/nodejs/tsconfig.json",
+    "test:node": "tsx --test ../../tests/nodejs/*.test.ts"
+  },
   "license": "UNLICENSED",
   "dependencies": {
     "ffi-napi": "^4.0.3",
     "ref-napi": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
   }
 }

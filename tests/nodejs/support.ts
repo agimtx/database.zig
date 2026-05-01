@@ -1,26 +1,67 @@
-const assert = require("node:assert/strict");
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const path = require("node:path");
+import assert = require("node:assert/strict");
+import crypto = require("node:crypto");
+import fs = require("node:fs");
+import path = require("node:path");
+
+type BindingModule = typeof import("../../bindings/nodejs/src/index");
+type Connection = import("../../bindings/nodejs/src/index").Connection;
+type ResultSet = import("../../bindings/nodejs/src/index").ResultSet;
+type ColumnMetadata = import("../../bindings/nodejs/src/index").ColumnMetadata;
+type ColumnType = import("../../bindings/nodejs/src/index").ColumnType;
+type ResultValue = import("../../bindings/nodejs/src/index").ResultValue;
+type QualifiedNamePartRole = import("../../bindings/nodejs/src/index").QualifiedNamePartRole;
+
+type DriverName = "adbc";
+type SectionConfig = Record<string, string>;
+type IniSections = Record<string, SectionConfig>;
+
+interface SkippedTarget {
+  skip: string;
+}
+
+interface LoadedSections {
+  sections: IniSections;
+}
+
+export interface LoadedTarget {
+  driver: DriverName;
+  section: string;
+  config: SectionConfig;
+  dsn(databaseOverride?: string): string;
+}
+
+export interface ExpectedColumn {
+  name: string;
+  type: ColumnType | ColumnType[];
+  rawType?: string | null;
+}
+
+export interface TypeCoverageCase {
+  metadataDatabase: string | null;
+  createTableSql: string;
+  insertSql: string;
+  selectSql: string;
+  expectedColumns: ExpectedColumn[];
+}
 
 const repoRoot = path.resolve(__dirname, "../..");
 const defaultEnvFile = path.join(repoRoot, ".env");
 const repoTmpRoot = path.join(repoRoot, ".tmp");
-const testSql = "select 1 as id, 'alpha' as value union all select 2 as id, 'beta' as value";
+export const testSql = "select 1 as id, 'alpha' as value union all select 2 as id, 'beta' as value";
 
-let bindingModule;
-let bindingLoadError;
+export let bindingModule!: BindingModule;
+export let bindingLoadError: Error | undefined;
 
 try {
-  bindingModule = require(path.join(repoRoot, "bindings/nodejs/src/index.js"));
-} catch (error) {
-  bindingLoadError = error;
+  bindingModule = require(path.join(repoRoot, "bindings/nodejs/src/index.js")) as BindingModule;
+} catch (error: unknown) {
+  bindingLoadError = error instanceof Error ? error : new Error(String(error));
 }
 
-function parseIniSections(filePath) {
+function parseIniSections(filePath: string): IniSections {
   const content = fs.readFileSync(filePath, "utf8");
-  const sections = {};
-  let current = null;
+  const sections: IniSections = {};
+  let current: string | null = null;
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -49,7 +90,7 @@ function parseIniSections(filePath) {
   return sections;
 }
 
-function loadSections() {
+function loadSections(): LoadedSections | SkippedTarget {
   const envFile = process.env.DATABASE_ZIG_TEST_ENV_FILE || defaultEnvFile;
   if (!fs.existsSync(envFile)) {
     return { skip: `test config not found: ${envFile}` };
@@ -60,8 +101,8 @@ function loadSections() {
   };
 }
 
-function resolveSectionName(sections, sectionName) {
-  const aliases = {
+function resolveSectionName(sections: IniSections, sectionName: string): string | null {
+  const aliases: Record<string, string> = {
     postgresql: "postgres",
   };
   const candidates = [sectionName, aliases[sectionName.toLowerCase()] || sectionName];
@@ -73,22 +114,22 @@ function resolveSectionName(sections, sectionName) {
   return null;
 }
 
-function shouldRunSection(sectionName) {
+export function shouldRunSection(sectionName: string): boolean {
   const requested = process.env.DATABASE_ZIG_TEST_SECTION;
   return !requested || requested.toLowerCase() === sectionName.toLowerCase();
 }
 
-function loadTarget(sectionName) {
+export function loadTarget(sectionName: string): LoadedTarget | SkippedTarget {
   const loaded = loadSections();
-  if (loaded.skip) {
+  if ("skip" in loaded) {
     return loaded;
   }
 
   const resolvedSectionName = resolveSectionName(loaded.sections, sectionName);
-  const section = resolvedSectionName ? loaded.sections[resolvedSectionName] : null;
-  if (!section) {
+  if (resolvedSectionName === null) {
     return { skip: `test section not found: ${sectionName}` };
   }
+  const section = loaded.sections[resolvedSectionName];
 
   return {
     driver: "adbc",
@@ -100,7 +141,7 @@ function loadTarget(sectionName) {
   };
 }
 
-function buildDsn(sectionName, config, databaseOverride = undefined) {
+function buildDsn(sectionName: string, config: SectionConfig, databaseOverride: string | undefined = undefined): string {
   if (config.dsn && databaseOverride === undefined) {
     return config.dsn;
   }
@@ -125,7 +166,7 @@ function buildDsn(sectionName, config, databaseOverride = undefined) {
   return `${scheme}://${credentials}${host}${port}${databasePart}`;
 }
 
-function defaultScheme(sectionName) {
+function defaultScheme(sectionName: string): string {
   const lowered = sectionName.toLowerCase();
   if (lowered === "postgres" || lowered === "postgresql") {
     return "postgresql";
@@ -136,7 +177,7 @@ function defaultScheme(sectionName) {
   return lowered;
 }
 
-function defaultDatabase(sectionName) {
+function defaultDatabase(sectionName: string): string {
   const lowered = sectionName.toLowerCase();
   if (lowered === "postgres" || lowered === "postgresql") {
     return "postgres";
@@ -147,9 +188,9 @@ function defaultDatabase(sectionName) {
   return "";
 }
 
-function vendoredDriverPath(name) {
-  let host;
-  let fileName;
+export function vendoredDriverPath(name: string): string {
+  let host: string;
+  let fileName: string;
 
   if (process.platform === "darwin") {
     host = process.arch === "arm64" ? "macos-arm64" : "macos-x86_64";
@@ -167,38 +208,38 @@ function vendoredDriverPath(name) {
   return path.join(repoRoot, "third_party", "adbc", "1.11.0", "lib", host, fileName);
 }
 
-function repoTmpDir(...parts) {
+export function repoTmpDir(...parts: string[]): string {
   const target = path.join(repoTmpRoot, ...parts);
   fs.mkdirSync(target, { recursive: true });
   return target;
 }
 
-function duckDbTestDsn(filePath) {
+export function duckDbTestDsn(filePath: string): string {
   return `driver=${vendoredDriverPath("duckdb")};entrypoint=duckdb_adbc_init;path=${filePath}`;
 }
 
-function removeFileIfExists(filePath) {
+export function removeFileIfExists(filePath: string): void {
   fs.rmSync(filePath, { force: true });
 }
 
-function uniqueIdentifier(prefix) {
+export function uniqueIdentifier(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
 }
 
-async function executeNonQuery(connection, sql) {
+export async function executeNonQuery(connection: Connection, sql: string): Promise<void> {
   const resultSet = await connection.execute(sql);
   await resultSet.close();
 }
 
-function readResultSetValues(resultSet, columnIndex) {
-  const values = [];
+export function readResultSetValues(resultSet: ResultSet, columnIndex: number): ResultValue[] {
+  const values: ResultValue[] = [];
   for (let rowIndex = 0; rowIndex < resultSet.rowCount; rowIndex += 1) {
     values.push(resultSet.value(rowIndex, columnIndex));
   }
   return values;
 }
 
-function findResultSetRowIndex(resultSet, columnIndex, expectedValue) {
+export function findResultSetRowIndex(resultSet: ResultSet, columnIndex: number, expectedValue: ResultValue): number {
   for (let rowIndex = 0; rowIndex < resultSet.rowCount; rowIndex += 1) {
     if (resultSet.value(rowIndex, columnIndex) === expectedValue) {
       return rowIndex;
@@ -208,7 +249,7 @@ function findResultSetRowIndex(resultSet, columnIndex, expectedValue) {
   throw new Error(`value not found in result set column ${columnIndex}: ${expectedValue}`);
 }
 
-function qualifiedNameRoleFromNamespaceKind(namespaceKind) {
+function qualifiedNameRoleFromNamespaceKind(namespaceKind: string): QualifiedNamePartRole {
   return {
     catalog: bindingModule.QUALIFIED_NAME_PART_ROLES.CATALOG,
     database: bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE,
@@ -216,14 +257,18 @@ function qualifiedNameRoleFromNamespaceKind(namespaceKind) {
     dataset: bindingModule.QUALIFIED_NAME_PART_ROLES.DATASET,
     namespace: bindingModule.QUALIFIED_NAME_PART_ROLES.NAMESPACE,
     object: bindingModule.QUALIFIED_NAME_PART_ROLES.OBJECT,
-  }[namespaceKind];
+  }[namespaceKind] as QualifiedNamePartRole;
 }
 
-function assertTableQualifiedName(resultSet, rowIndex) {
+export function assertStringValue(value: ResultValue, label: string): asserts value is string {
+  assert.equal(typeof value, "string", `${label} should be returned as text`);
+}
+
+export function assertTableQualifiedName(resultSet: ResultSet, rowIndex: number) {
   const qualifiedName = resultSet.tableQualifiedName(rowIndex);
   assert.ok(qualifiedName instanceof bindingModule.QualifiedName);
 
-  const expectedParts = [];
+  const expectedParts: Array<{ role: QualifiedNamePartRole; value: string }> = [];
   const catalog = resultSet.value(rowIndex, 0);
   const namespace = resultSet.value(rowIndex, 1);
   const objectName = resultSet.value(rowIndex, 2);
@@ -231,14 +276,19 @@ function assertTableQualifiedName(resultSet, rowIndex) {
   const formatted = resultSet.value(rowIndex, 5);
 
   if (catalog !== null && catalog !== "") {
+    assertStringValue(catalog, "catalog_name");
     expectedParts.push({ role: bindingModule.QUALIFIED_NAME_PART_ROLES.CATALOG, value: catalog });
   }
   if (namespace !== null && namespace !== "") {
+    assertStringValue(namespace, "database_name");
+    assertStringValue(namespaceKind, "namespace_kind");
     expectedParts.push({ role: qualifiedNameRoleFromNamespaceKind(namespaceKind), value: namespace });
   }
   if (objectName !== null && objectName !== "") {
+    assertStringValue(objectName, "table_name");
     expectedParts.push({ role: bindingModule.QUALIFIED_NAME_PART_ROLES.OBJECT, value: objectName });
   }
+  assertStringValue(formatted, "qualified_name");
 
   assert.deepEqual(
     qualifiedName.parts.map((part) => ({ role: part.role, value: part.value })),
@@ -248,28 +298,28 @@ function assertTableQualifiedName(resultSet, rowIndex) {
   return qualifiedName;
 }
 
-function assertNonEmptyValue(value, label) {
-  assert.equal(typeof value, "string", `${label} should be returned as text`);
+export function assertNonEmptyValue(value: ResultValue, label: string): asserts value is string {
+  assertStringValue(value, label);
   assert.ok(value.length > 0, `${label} should not be empty`);
 }
 
-function assertHexValue(value, label) {
+export function assertHexValue(value: ResultValue, label: string): void {
   if (Buffer.isBuffer(value)) {
     assert.ok(value.length > 0, `${label} should not be empty`);
     return;
   }
 
-  assert.equal(typeof value, "string", `${label} should be returned as bytes or hexadecimal text`);
+  assertStringValue(value, label);
   assert.ok(value.length > 0, `${label} should not be empty`);
   assert.equal(value.length % 2, 0, `${label} should contain an even number of hex characters`);
   assert.match(value, /^[0-9a-f]+$/i, `${label} should be hexadecimal`);
 }
 
-function assertBooleanValue(value) {
+export function assertBooleanValue(value: ResultValue): asserts value is boolean {
   assert.equal(typeof value, "boolean", `unexpected boolean value: ${value}`);
 }
 
-function assertColumnMetadata(columns, expectedColumns) {
+export function assertColumnMetadata(columns: ColumnMetadata[], expectedColumns: ExpectedColumn[]): void {
   assert.equal(columns.length, expectedColumns.length, `expected ${expectedColumns.length} columns, got ${columns.length}`);
   for (let index = 0; index < expectedColumns.length; index += 1) {
     const actual = columns[index];
@@ -277,13 +327,23 @@ function assertColumnMetadata(columns, expectedColumns) {
     assert.equal(actual.name, expected.name, `column ${index} name mismatch`);
     const expectedTypes = Array.isArray(expected.type) ? expected.type : [expected.type];
     assert.ok(expectedTypes.includes(actual.columnType), `column ${actual.name} type mismatch: got ${actual.columnType}, expected one of ${expectedTypes.join(", ")}`);
-    if (Object.hasOwn(expected, "rawType")) {
+    if (Object.prototype.hasOwnProperty.call(expected, "rawType")) {
       assert.equal(actual.rawType, expected.rawType, `column ${actual.name} rawType mismatch`);
     }
   }
 }
 
-async function assertTypeCoverage(connection, typeCoverage, assertValues) {
+export function assertErrorMessage(error: unknown, pattern: RegExp): true {
+  assert.ok(error instanceof Error);
+  assert.match(error.message, pattern);
+  return true;
+}
+
+export async function assertTypeCoverage(
+  connection: Connection,
+  typeCoverage: TypeCoverageCase,
+  assertValues: (resultSet: ResultSet) => void,
+): Promise<TypeCoverageCase> {
   await executeNonQuery(connection, typeCoverage.createTableSql);
   await executeNonQuery(connection, typeCoverage.insertSql);
 
@@ -307,24 +367,3 @@ async function assertTypeCoverage(connection, typeCoverage, assertValues) {
 
   return typeCoverage;
 }
-
-module.exports = {
-  bindingLoadError,
-  bindingModule,
-  loadTarget,
-  shouldRunSection,
-  vendoredDriverPath,
-  repoTmpDir,
-  duckDbTestDsn,
-  removeFileIfExists,
-  uniqueIdentifier,
-  executeNonQuery,
-  findResultSetRowIndex,
-  readResultSetValues,
-  assertNonEmptyValue,
-  assertHexValue,
-  assertBooleanValue,
-  assertColumnMetadata,
-  assertTableQualifiedName,
-  assertTypeCoverage,
-};
