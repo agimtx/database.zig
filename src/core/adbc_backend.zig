@@ -318,7 +318,12 @@ pub fn getTables(
     const context = connectionContext(handle);
     const sql = try buildGetTablesSql(allocator, context.vendor_name, options);
     defer allocator.free(sql);
-    return execute(allocator, handle, result_set_id, sql);
+
+    const result_set = try execute(allocator, handle, result_set_id, sql);
+    errdefer closeResultSet(allocator, result_set);
+
+    try appendTableQualifiedNames(allocator, context.vendor_name, result_set);
+    return result_set;
 }
 
 pub fn getDatabases(
@@ -2563,6 +2568,142 @@ fn buildGetDatabasesSql(allocator: std.mem.Allocator, vendor_name: []const u8) !
         return allocator.dupe(u8, "select schema_name as database_name from EXA_ALL_SCHEMAS order by schema_name");
     }
     return allocator.dupe(u8, "select schema_name as database_name from information_schema.schemata order by schema_name");
+}
+
+fn appendTableQualifiedNames(
+    allocator: std.mem.Allocator,
+    vendor_name: []const u8,
+    result_set: *driver.ResultSetHandle,
+) !void {
+    if (result_set.columns.len < 4) return;
+
+    const namespace_role = tableNamespaceRole(vendor_name);
+    const namespace_kind = @tagName(namespace_role);
+    const old_columns = result_set.columns;
+    const old_rows = result_set.rows;
+
+    const new_columns = try allocator.alloc(types.ColumnMetadata, old_columns.len + 2);
+    errdefer allocator.free(new_columns);
+
+    for (old_columns, 0..) |column, index| {
+        new_columns[index] = column;
+    }
+
+    new_columns[old_columns.len] = .{
+        .name = try allocator.dupe(u8, "namespace_kind"),
+        .column_type = .text,
+        .nullable = false,
+    };
+    errdefer allocator.free(new_columns[old_columns.len].name);
+
+    new_columns[old_columns.len + 1] = .{
+        .name = try allocator.dupe(u8, "qualified_name"),
+        .column_type = .text,
+        .nullable = false,
+    };
+    errdefer allocator.free(new_columns[old_columns.len + 1].name);
+
+    const new_rows = try allocator.alloc(types.ResultRow, old_rows.len);
+    errdefer allocator.free(new_rows);
+
+    var built_rows: usize = 0;
+    errdefer {
+        for (new_rows[0..built_rows]) |row| {
+            allocator.free(row.values[row.values.len - 2].text);
+            allocator.free(row.values[row.values.len - 1].text);
+            allocator.free(row.values);
+        }
+    }
+
+    for (old_rows, 0..) |row, index| {
+        const new_values = try allocator.alloc(types.ResultCell, row.values.len + 2);
+        errdefer allocator.free(new_values);
+
+        for (row.values, 0..) |cell, cell_index| {
+            new_values[cell_index] = cell;
+        }
+
+        new_values[row.values.len] = .{
+            .text = try allocator.dupe(u8, namespace_kind),
+            .is_null = false,
+        };
+        errdefer allocator.free(new_values[row.values.len].text);
+
+        new_values[row.values.len + 1] = .{
+            .text = try formatTableQualifiedName(allocator, vendor_name, row),
+            .is_null = false,
+        };
+
+        new_rows[index] = .{ .values = new_values };
+        built_rows += 1;
+    }
+
+    for (old_rows) |row| {
+        allocator.free(row.values);
+    }
+    allocator.free(old_rows);
+    allocator.free(old_columns);
+
+    result_set.columns = new_columns;
+    result_set.rows = new_rows;
+}
+
+fn tableNamespaceRole(vendor_name: []const u8) types.QualifiedNamePartRole {
+    if (std.mem.eql(u8, vendor_name, "postgresql") or
+        std.mem.eql(u8, vendor_name, "redshift") or
+        std.mem.eql(u8, vendor_name, "exasol"))
+    {
+        return .schema;
+    }
+
+    if (std.mem.eql(u8, vendor_name, "bigquery")) {
+        return .dataset;
+    }
+
+    if (std.mem.eql(u8, vendor_name, "snowflake")) {
+        return .schema;
+    }
+
+    return .database;
+}
+
+fn formatTableQualifiedName(
+    allocator: std.mem.Allocator,
+    vendor_name: []const u8,
+    row: types.ResultRow,
+) ![]u8 {
+    if (row.values.len < 3) {
+        return allocator.dupe(u8, "");
+    }
+
+    var parts_buffer: [3]types.QualifiedNamePart = undefined;
+    var part_count: usize = 0;
+
+    if (!row.values[0].is_null and row.values[0].text.len != 0) {
+        parts_buffer[part_count] = .{
+            .role = .catalog,
+            .value = row.values[0].text,
+        };
+        part_count += 1;
+    }
+
+    if (!row.values[1].is_null and row.values[1].text.len != 0) {
+        parts_buffer[part_count] = .{
+            .role = tableNamespaceRole(vendor_name),
+            .value = row.values[1].text,
+        };
+        part_count += 1;
+    }
+
+    if (!row.values[2].is_null and row.values[2].text.len != 0) {
+        parts_buffer[part_count] = .{
+            .role = .object,
+            .value = row.values[2].text,
+        };
+        part_count += 1;
+    }
+
+    return (types.QualifiedName{ .parts = parts_buffer[0..part_count] }).format(allocator, ".");
 }
 
 fn appendSqlEqualsFilter(

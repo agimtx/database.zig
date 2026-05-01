@@ -4,7 +4,7 @@ import datetime as dt
 from decimal import Decimal
 import unittest
 
-from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_type_coverage, duckdb_test_dsn, read_result_set_values, remove_file_if_exists, repo_tmp_dir, should_run_section, unique_identifier, vendored_adbc_driver_path
+from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_table_qualified_name, assert_type_coverage, duckdb_test_dsn, find_result_set_row_index, read_result_set_values, remove_file_if_exists, repo_tmp_dir, should_run_section, unique_identifier, vendored_adbc_driver_path
 
 
 def build_duckdb_type_coverage_case(table_name: str) -> dict[str, object]:
@@ -147,6 +147,7 @@ class DuckDBBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     try:
                         self.assertIn(table_name, read_result_set_values(tables_result, 2))
                         self.assertIn(type_coverage["metadata_database"], read_result_set_values(tables_result, 1))
+                        assert_table_qualified_name(tables_result, find_result_set_row_index(tables_result, 2, table_name))
                     finally:
                         await tables_result.close_async()
 

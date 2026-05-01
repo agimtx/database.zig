@@ -198,6 +198,56 @@ function readResultSetValues(resultSet, columnIndex) {
   return values;
 }
 
+function findResultSetRowIndex(resultSet, columnIndex, expectedValue) {
+  for (let rowIndex = 0; rowIndex < resultSet.rowCount; rowIndex += 1) {
+    if (resultSet.value(rowIndex, columnIndex) === expectedValue) {
+      return rowIndex;
+    }
+  }
+
+  throw new Error(`value not found in result set column ${columnIndex}: ${expectedValue}`);
+}
+
+function qualifiedNameRoleFromNamespaceKind(namespaceKind) {
+  return {
+    catalog: bindingModule.QUALIFIED_NAME_PART_ROLES.CATALOG,
+    database: bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE,
+    schema: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA,
+    dataset: bindingModule.QUALIFIED_NAME_PART_ROLES.DATASET,
+    namespace: bindingModule.QUALIFIED_NAME_PART_ROLES.NAMESPACE,
+    object: bindingModule.QUALIFIED_NAME_PART_ROLES.OBJECT,
+  }[namespaceKind];
+}
+
+function assertTableQualifiedName(resultSet, rowIndex) {
+  const qualifiedName = resultSet.tableQualifiedName(rowIndex);
+  assert.ok(qualifiedName instanceof bindingModule.QualifiedName);
+
+  const expectedParts = [];
+  const catalog = resultSet.value(rowIndex, 0);
+  const namespace = resultSet.value(rowIndex, 1);
+  const objectName = resultSet.value(rowIndex, 2);
+  const namespaceKind = resultSet.value(rowIndex, 4);
+  const formatted = resultSet.value(rowIndex, 5);
+
+  if (catalog !== null && catalog !== "") {
+    expectedParts.push({ role: bindingModule.QUALIFIED_NAME_PART_ROLES.CATALOG, value: catalog });
+  }
+  if (namespace !== null && namespace !== "") {
+    expectedParts.push({ role: qualifiedNameRoleFromNamespaceKind(namespaceKind), value: namespace });
+  }
+  if (objectName !== null && objectName !== "") {
+    expectedParts.push({ role: bindingModule.QUALIFIED_NAME_PART_ROLES.OBJECT, value: objectName });
+  }
+
+  assert.deepEqual(
+    qualifiedName.parts.map((part) => ({ role: part.role, value: part.value })),
+    expectedParts,
+  );
+  assert.equal(qualifiedName.formatted, formatted);
+  return qualifiedName;
+}
+
 function assertNonEmptyValue(value, label) {
   assert.equal(typeof value, "string", `${label} should be returned as text`);
   assert.ok(value.length > 0, `${label} should not be empty`);
@@ -269,10 +319,12 @@ module.exports = {
   removeFileIfExists,
   uniqueIdentifier,
   executeNonQuery,
+  findResultSetRowIndex,
   readResultSetValues,
   assertNonEmptyValue,
   assertHexValue,
   assertBooleanValue,
   assertColumnMetadata,
+  assertTableQualifiedName,
   assertTypeCoverage,
 };

@@ -9,9 +9,11 @@ const {
 	uniqueIdentifier,
 	executeNonQuery,
 	readResultSetValues,
+	findResultSetRowIndex,
 	assertNonEmptyValue,
 	assertBooleanValue,
 	assertColumnMetadata,
+	assertTableQualifiedName,
 	assertTypeCoverage,
 } = require("./support.js");
 
@@ -196,6 +198,7 @@ async function runStarRocksLifecycleTest() {
 				const tablesResult = await databaseConnection.getTables(null, databaseName);
 				try {
 					assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));
+					assertTableQualifiedName(tablesResult, findResultSetRowIndex(tablesResult, 2, tableName));
 				} finally {
 					await tablesResult.close();
 				}

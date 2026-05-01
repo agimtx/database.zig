@@ -64,6 +64,15 @@ class ColumnType(IntEnum):
     DURATION = 25
 
 
+class QualifiedNamePartRole(IntEnum):
+    CATALOG = 0
+    DATABASE = 1
+    SCHEMA = 2
+    DATASET = 3
+    NAMESPACE = 4
+    OBJECT = 5
+
+
 class _CColumnMetadata(ctypes.Structure):
     _fields_ = [
         ("name_ptr", ctypes.c_void_p),
@@ -72,6 +81,23 @@ class _CColumnMetadata(ctypes.Structure):
         ("raw_type_len", ctypes.c_size_t),
         ("column_type", ctypes.c_int32),
         ("nullable", ctypes.c_uint8),
+    ]
+
+
+class _CQualifiedNamePart(ctypes.Structure):
+    _fields_ = [
+        ("role", ctypes.c_int32),
+        ("value_ptr", ctypes.c_void_p),
+        ("value_len", ctypes.c_size_t),
+    ]
+
+
+class _CQualifiedName(ctypes.Structure):
+    _fields_ = [
+        ("part_count", ctypes.c_size_t),
+        ("formatted_ptr", ctypes.c_void_p),
+        ("formatted_len", ctypes.c_size_t),
+        ("parts", _CQualifiedNamePart * 3),
     ]
 
 
@@ -105,6 +131,21 @@ class ColumnMetadata:
     raw_type: str | None
     column_type: ColumnType
     nullable: bool
+
+
+@dataclass(frozen=True)
+class QualifiedNamePart:
+    role: QualifiedNamePartRole
+    value: str
+
+
+@dataclass(frozen=True)
+class QualifiedName:
+    parts: tuple[QualifiedNamePart, ...]
+    formatted: str
+
+    def __str__(self) -> str:
+        return self.formatted
 
 
 ResultValue = bool | int | float | str | bytes | Decimal | dt.date | dt.time | dt.datetime | uuid.UUID | list[Any] | dict[str, Any]
@@ -178,6 +219,9 @@ class ResultSet:
     def value(self, row_index: int, column_index: int) -> ResultValue | None:
         raw_value = self._manager._result_set_value(self.id, row_index, column_index)
         return _decode_result_value(raw_value, self.columns[column_index].column_type)
+
+    def table_qualified_name(self, row_index: int) -> QualifiedName:
+        return self._manager._result_set_table_qualified_name(self.id, row_index)
 
     def close(self) -> None:
         self._manager._result_set_close(self.id)
@@ -349,6 +393,8 @@ class ConnectionManager:
         self._lib.aq_result_set_column_metadata.restype = ctypes.c_int32
         self._lib.aq_result_set_value.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_size_t, ctypes.POINTER(_CResultCell)]
         self._lib.aq_result_set_value.restype = ctypes.c_int32
+        self._lib.aq_result_set_table_qualified_name.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(_CQualifiedName)]
+        self._lib.aq_result_set_table_qualified_name.restype = ctypes.c_int32
         self._lib.aq_cursor_open.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
         self._lib.aq_cursor_open.restype = ctypes.c_uint64
         self._lib.aq_cursor_open_async.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p]
@@ -464,6 +510,22 @@ class ConnectionManager:
         if raw_cell.is_null:
             return None
         return ctypes.string_at(raw_cell.text_ptr, raw_cell.text_len).decode("utf-8")
+
+    def _result_set_table_qualified_name(self, result_set_id: int, row_index: int) -> QualifiedName:
+        raw_name = _CQualifiedName()
+        self._raise_on_status(
+            self._lib.aq_result_set_table_qualified_name(self._manager, result_set_id, row_index, ctypes.byref(raw_name)),
+            "aq_result_set_table_qualified_name",
+        )
+
+        parts: list[QualifiedNamePart] = []
+        for index in range(raw_name.part_count):
+            raw_part = raw_name.parts[index]
+            value = ctypes.string_at(raw_part.value_ptr, raw_part.value_len).decode("utf-8") if raw_part.value_ptr and raw_part.value_len > 0 else ""
+            parts.append(QualifiedNamePart(role=QualifiedNamePartRole(raw_part.role), value=value))
+
+        formatted = ctypes.string_at(raw_name.formatted_ptr, raw_name.formatted_len).decode("utf-8") if raw_name.formatted_ptr and raw_name.formatted_len > 0 else ""
+        return QualifiedName(parts=tuple(parts), formatted=formatted)
 
     def _open_cursor(self, connection_id: int, sql: str) -> Cursor:
         cursor_id = self._lib.aq_cursor_open(self._manager, connection_id, sql.encode("utf-8"))

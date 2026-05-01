@@ -8,6 +8,9 @@ from decimal import Decimal
 from _support import ColumnType, _binding_module
 
 ColumnMetadata = _binding_module.ColumnMetadata
+QualifiedName = _binding_module.QualifiedName
+QualifiedNamePart = _binding_module.QualifiedNamePart
+QualifiedNamePartRole = _binding_module.QualifiedNamePartRole
 ResultSet = _binding_module.ResultSet
 
 
@@ -23,6 +26,16 @@ class _FakeManager:
     def _result_set_value(self, result_set_id: int, row_index: int, column_index: int) -> str | None:
         del result_set_id, row_index, column_index
         return self._raw_value
+
+    def _result_set_table_qualified_name(self, result_set_id: int, row_index: int) -> QualifiedName:
+        del result_set_id, row_index
+        return QualifiedName(
+            parts=(
+                QualifiedNamePart(role=QualifiedNamePartRole.DATABASE, value="main"),
+                QualifiedNamePart(role=QualifiedNamePartRole.OBJECT, value="records"),
+            ),
+            formatted="main.records",
+        )
 
 
 class ResultValueConversionTests(unittest.TestCase):
@@ -75,6 +88,18 @@ class ResultValueConversionTests(unittest.TestCase):
 
     def test_null_values_remain_none(self) -> None:
         self.assertIsNone(self._value(ColumnType.TEXT, None))
+
+    def test_table_qualified_name_returns_typed_parts(self) -> None:
+        result_set = ResultSet(_FakeManager(ColumnType.TEXT, "ignored"), 1)
+        qualified_name = result_set.table_qualified_name(0)
+        self.assertEqual("main.records", str(qualified_name))
+        self.assertEqual(
+            (
+                QualifiedNamePart(role=QualifiedNamePartRole.DATABASE, value="main"),
+                QualifiedNamePart(role=QualifiedNamePartRole.OBJECT, value="records"),
+            ),
+            qualified_name.parts,
+        )
 
 
 if __name__ == "__main__":

@@ -96,6 +96,15 @@ export fn aq_result_set_value(
     return ffi.aq_result_set_value(raw_manager, result_set_id, row_index, column_index, out_cell);
 }
 
+export fn aq_result_set_table_qualified_name(
+    raw_manager: ?*anyopaque,
+    result_set_id: u64,
+    row_index: usize,
+    out_name: ?*ffi.AqQualifiedName,
+) i32 {
+    return ffi.aq_result_set_table_qualified_name(raw_manager, result_set_id, row_index, out_name);
+}
+
 export fn aq_cursor_open(raw_manager: ?*anyopaque, connection_id: u64, sql: ?[*:0]const u8) u64 {
     return ffi.aq_cursor_open(raw_manager, connection_id, sql);
 }

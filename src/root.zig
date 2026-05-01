@@ -14,6 +14,9 @@ pub const ColumnType = types.ColumnType;
 pub const ColumnMetadata = types.ColumnMetadata;
 pub const ResultCell = types.ResultCell;
 pub const ResultRow = types.ResultRow;
+pub const QualifiedNamePartRole = types.QualifiedNamePartRole;
+pub const QualifiedNamePart = types.QualifiedNamePart;
+pub const QualifiedName = types.QualifiedName;
 pub const ConnectOptions = types.ConnectOptions;
 pub const GetTablesOptions = types.GetTablesOptions;
 

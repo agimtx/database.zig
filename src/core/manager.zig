@@ -891,11 +891,20 @@ test "manager exposes test and metadata discovery contracts" {
     const tables = try manager.getTables(connection.id, .{ .database = "main" });
     defer manager.closeResultSet(tables.id) catch {};
 
-    try std.testing.expect(try manager.resultSetColumnCount(tables.id) >= 4);
+    try std.testing.expect(try manager.resultSetColumnCount(tables.id) >= 6);
     try std.testing.expect((try manager.resultSetRowCount(tables.id)) >= 1);
 
     const database_name = try manager.resultSetCell(tables.id, 0, 1);
     try std.testing.expectEqualStrings("main", database_name.text);
+
+    const namespace_kind = try manager.resultSetColumn(tables.id, 4);
+    try std.testing.expectEqualStrings("namespace_kind", namespace_kind.name);
+
+    const qualified_name = try manager.resultSetColumn(tables.id, 5);
+    try std.testing.expectEqualStrings("qualified_name", qualified_name.name);
+
+    const qualified_name_value = try manager.resultSetCell(tables.id, 0, 5);
+    try std.testing.expect(qualified_name_value.text.len != 0);
 
     const databases = try manager.getDatabases(connection.id);
     defer manager.closeResultSet(databases.id) catch {};

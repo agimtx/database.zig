@@ -9,10 +9,12 @@ const {
 	uniqueIdentifier,
 	executeNonQuery,
 	readResultSetValues,
+	findResultSetRowIndex,
 	assertNonEmptyValue,
 	assertHexValue,
 	assertBooleanValue,
 	assertColumnMetadata,
+	assertTableQualifiedName,
 	assertTypeCoverage,
 } = require("./support.js");
 
@@ -269,6 +271,7 @@ async function runPostgresLifecycleTest() {
 					if (typeCoverage.metadataDatabase !== null) {
 						assert.ok(readResultSetValues(tablesResult, 1).includes(typeCoverage.metadataDatabase));
 					}
+					assertTableQualifiedName(tablesResult, findResultSetRowIndex(tablesResult, 2, tableName));
 				} finally {
 					await tablesResult.close();
 				}

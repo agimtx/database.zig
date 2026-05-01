@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const DriverKind = enum(u8) {
     adbc,
     custom,
@@ -54,6 +56,42 @@ pub const ResultRow = struct {
     values: []const ResultCell,
 };
 
+pub const QualifiedNamePartRole = enum(u8) {
+    catalog,
+    database,
+    schema,
+    dataset,
+    namespace,
+    object,
+};
+
+pub const QualifiedNamePart = struct {
+    role: QualifiedNamePartRole,
+    value: []const u8,
+};
+
+pub const QualifiedName = struct {
+    parts: []const QualifiedNamePart,
+
+    pub fn format(self: QualifiedName, allocator: std.mem.Allocator, separator: []const u8) ![]u8 {
+        var builder = std.ArrayList(u8).empty;
+        errdefer builder.deinit(allocator);
+
+        var wrote_part = false;
+        for (self.parts) |part| {
+            if (part.value.len == 0) continue;
+
+            if (wrote_part) {
+                try builder.appendSlice(allocator, separator);
+            }
+            try builder.appendSlice(allocator, part.value);
+            wrote_part = true;
+        }
+
+        return builder.toOwnedSlice(allocator);
+    }
+};
+
 pub const GetTablesOptions = struct {
     catalog: ?[]const u8 = null,
     database: ?[]const u8 = null,
@@ -70,3 +108,33 @@ pub const ConnectOptions = struct {
     role: ?[]const u8 = null,
     flags: u32 = 0,
 };
+
+test "qualified name preserves ordered non-empty parts" {
+    const qualified_name = QualifiedName{
+        .parts = &[_]QualifiedNamePart{
+            .{ .role = .catalog, .value = "analytics" },
+            .{ .role = .schema, .value = "public" },
+            .{ .role = .object, .value = "events" },
+        },
+    };
+
+    const formatted = try qualified_name.format(std.testing.allocator, ".");
+    defer std.testing.allocator.free(formatted);
+
+    try std.testing.expectEqualStrings("analytics.public.events", formatted);
+}
+
+test "qualified name skips empty parts" {
+    const qualified_name = QualifiedName{
+        .parts = &[_]QualifiedNamePart{
+            .{ .role = .catalog, .value = "" },
+            .{ .role = .database, .value = "main" },
+            .{ .role = .object, .value = "records" },
+        },
+    };
+
+    const formatted = try qualified_name.format(std.testing.allocator, ".");
+    defer std.testing.allocator.free(formatted);
+
+    try std.testing.expectEqualStrings("main.records", formatted);
+}

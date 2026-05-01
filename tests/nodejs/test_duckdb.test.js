@@ -13,8 +13,10 @@ const {
 	removeFileIfExists,
 	uniqueIdentifier,
 	readResultSetValues,
+	findResultSetRowIndex,
 	assertBooleanValue,
 	assertColumnMetadata,
+	assertTableQualifiedName,
 	assertTypeCoverage,
 } = require("./support.js");
 
@@ -162,6 +164,7 @@ async function runDuckDbLifecycleTest() {
 			try {
 				assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));
 				assert.ok(readResultSetValues(tablesResult, 1).includes(typeCoverage.metadataDatabase));
+				assertTableQualifiedName(tablesResult, findResultSetRowIndex(tablesResult, 2, tableName));
 			} finally {
 				await tablesResult.close();
 			}

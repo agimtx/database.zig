@@ -140,6 +140,8 @@ const stub_table_columns = [_]types.ColumnMetadata{
     .{ .name = "database_name", .column_type = .text, .nullable = true },
     .{ .name = "table_name", .column_type = .text, .nullable = false },
     .{ .name = "table_type", .column_type = .text, .nullable = false },
+    .{ .name = "namespace_kind", .column_type = .text, .nullable = false },
+    .{ .name = "qualified_name", .column_type = .text, .nullable = false },
 };
 
 const stub_table_row_values = [_]types.ResultCell{
@@ -147,6 +149,8 @@ const stub_table_row_values = [_]types.ResultCell{
     .{ .text = "main", .is_null = false },
     .{ .text = "example_table", .is_null = false },
     .{ .text = "TABLE", .is_null = false },
+    .{ .text = "database", .is_null = false },
+    .{ .text = "main.example_table", .is_null = false },
 };
 
 const stub_table_rows = [_]types.ResultRow{

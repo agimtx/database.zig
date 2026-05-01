@@ -31,6 +31,19 @@ pub const AqColumnMetadata = extern struct {
     nullable: u8,
 };
 
+pub const AqQualifiedNamePart = extern struct {
+    role: i32,
+    value_ptr: ?[*]const u8,
+    value_len: usize,
+};
+
+pub const AqQualifiedName = extern struct {
+    part_count: usize,
+    formatted_ptr: ?[*]const u8,
+    formatted_len: usize,
+    parts: [3]AqQualifiedNamePart,
+};
+
 pub const AqResultCell = extern struct {
     text_ptr: [*]const u8,
     text_len: usize,
@@ -93,6 +106,54 @@ fn fillResultCell(out_cell: *AqResultCell, cell: root.ResultCell) void {
         .text_len = cell.text.len,
         .is_null = if (cell.is_null) 1 else 0,
     };
+}
+
+fn clearQualifiedName(out_name: *AqQualifiedName) void {
+    out_name.* = .{
+        .part_count = 0,
+        .formatted_ptr = null,
+        .formatted_len = 0,
+        .parts = .{
+            .{ .role = @intFromEnum(root.QualifiedNamePartRole.catalog), .value_ptr = null, .value_len = 0 },
+            .{ .role = @intFromEnum(root.QualifiedNamePartRole.catalog), .value_ptr = null, .value_len = 0 },
+            .{ .role = @intFromEnum(root.QualifiedNamePartRole.catalog), .value_ptr = null, .value_len = 0 },
+        },
+    };
+}
+
+fn fillQualifiedNamePart(out_part: *AqQualifiedNamePart, role: root.QualifiedNamePartRole, value: []const u8) void {
+    out_part.* = .{
+        .role = @intFromEnum(role),
+        .value_ptr = value.ptr,
+        .value_len = value.len,
+    };
+}
+
+fn findResultSetColumnIndex(
+    manager: *root.ConnectionManager,
+    result_set_id: u64,
+    expected_name: []const u8,
+) !usize {
+    const count = try manager.resultSetColumnCount(result_set_id);
+    var index: usize = 0;
+    while (index < count) : (index += 1) {
+        const column = try manager.resultSetColumn(result_set_id, index);
+        if (std.mem.eql(u8, column.name, expected_name)) {
+            return index;
+        }
+    }
+
+    return error.InvalidArgument;
+}
+
+fn qualifiedNameRoleFromText(text: []const u8) ?root.QualifiedNamePartRole {
+    if (std.mem.eql(u8, text, "catalog")) return .catalog;
+    if (std.mem.eql(u8, text, "database")) return .database;
+    if (std.mem.eql(u8, text, "schema")) return .schema;
+    if (std.mem.eql(u8, text, "dataset")) return .dataset;
+    if (std.mem.eql(u8, text, "namespace")) return .namespace;
+    if (std.mem.eql(u8, text, "object")) return .object;
+    return null;
 }
 
 fn defaultStatusMessage(status: i32) []const u8 {
@@ -371,6 +432,87 @@ pub fn aq_result_set_value(
     return aq_ok;
 }
 
+pub fn aq_result_set_table_qualified_name(
+    raw_manager: ?*anyopaque,
+    result_set_id: u64,
+    row_index: usize,
+    out_name: ?*AqQualifiedName,
+) i32 {
+    const manager = castManager(raw_manager) orelse return aq_invalid_argument;
+    clearManagerError(manager);
+    const qualified_name_out = out_name orelse return aq_invalid_argument;
+    clearQualifiedName(qualified_name_out);
+
+    const catalog_index = findResultSetColumnIndex(manager, result_set_id, "catalog_name") catch {
+        manager.setLastErrorCopy("result set does not expose catalog_name") catch {};
+        return aq_invalid_argument;
+    };
+    const namespace_index = findResultSetColumnIndex(manager, result_set_id, "database_name") catch {
+        manager.setLastErrorCopy("result set does not expose database_name") catch {};
+        return aq_invalid_argument;
+    };
+    const object_index = findResultSetColumnIndex(manager, result_set_id, "table_name") catch {
+        manager.setLastErrorCopy("result set does not expose table_name") catch {};
+        return aq_invalid_argument;
+    };
+    const namespace_kind_index = findResultSetColumnIndex(manager, result_set_id, "namespace_kind") catch {
+        manager.setLastErrorCopy("result set does not expose namespace_kind") catch {};
+        return aq_invalid_argument;
+    };
+    const formatted_index = findResultSetColumnIndex(manager, result_set_id, "qualified_name") catch {
+        manager.setLastErrorCopy("result set does not expose qualified_name") catch {};
+        return aq_invalid_argument;
+    };
+
+    const catalog = manager.resultSetCell(result_set_id, row_index, catalog_index) catch |err| {
+        setManagerError(manager, err);
+        return mapError(err);
+    };
+    const namespace_value = manager.resultSetCell(result_set_id, row_index, namespace_index) catch |err| {
+        setManagerError(manager, err);
+        return mapError(err);
+    };
+    const object_value = manager.resultSetCell(result_set_id, row_index, object_index) catch |err| {
+        setManagerError(manager, err);
+        return mapError(err);
+    };
+    const namespace_kind = manager.resultSetCell(result_set_id, row_index, namespace_kind_index) catch |err| {
+        setManagerError(manager, err);
+        return mapError(err);
+    };
+    const formatted = manager.resultSetCell(result_set_id, row_index, formatted_index) catch |err| {
+        setManagerError(manager, err);
+        return mapError(err);
+    };
+
+    const namespace_role = qualifiedNameRoleFromText(namespace_kind.text) orelse {
+        manager.setLastErrorCopy("unsupported namespace_kind value") catch {};
+        return aq_invalid_argument;
+    };
+
+    var part_count: usize = 0;
+    if (!catalog.is_null and catalog.text.len != 0) {
+        fillQualifiedNamePart(&qualified_name_out.parts[part_count], .catalog, catalog.text);
+        part_count += 1;
+    }
+    if (!namespace_value.is_null and namespace_value.text.len != 0) {
+        fillQualifiedNamePart(&qualified_name_out.parts[part_count], namespace_role, namespace_value.text);
+        part_count += 1;
+    }
+    if (!object_value.is_null and object_value.text.len != 0) {
+        fillQualifiedNamePart(&qualified_name_out.parts[part_count], .object, object_value.text);
+        part_count += 1;
+    }
+
+    qualified_name_out.part_count = part_count;
+    if (!formatted.is_null) {
+        qualified_name_out.formatted_ptr = formatted.text.ptr;
+        qualified_name_out.formatted_len = formatted.text.len;
+    }
+
+    return aq_ok;
+}
+
 pub fn aq_cursor_open(raw_manager: ?*anyopaque, connection_id: u64, sql: ?[*:0]const u8) u64 {
     const manager = castManager(raw_manager) orelse return 0;
     clearManagerError(manager);
@@ -504,4 +646,72 @@ pub fn aq_last_error_message(
     }
 
     return aq_ok;
+}
+
+fn textFromPointer(pointer: ?[*]const u8, len: usize) []const u8 {
+    if (pointer) |value| {
+        return value[0..len];
+    }
+
+    return "";
+}
+
+test "c api exposes table qualified name metadata" {
+    if (!adbc_backend.sqliteDriverUsable(std.testing.allocator)) {
+        return error.SkipZigTest;
+    }
+
+    const raw_manager = aq_manager_create() orelse return error.OutOfMemory;
+    defer aq_manager_destroy(raw_manager);
+
+    const dsn = try adbc_backend.testSqliteDsn(std.testing.allocator);
+    defer std.testing.allocator.free(dsn);
+    const dsn_z = try std.testing.allocator.dupeZ(u8, dsn);
+    defer std.testing.allocator.free(dsn_z);
+
+    const connection_id = aq_connection_open(raw_manager, 1, dsn_z.ptr);
+    try std.testing.expect(connection_id != 0);
+    defer {
+        std.testing.expectEqual(aq_ok, aq_connection_close(raw_manager, connection_id)) catch unreachable;
+    }
+
+    const create_sql = try std.testing.allocator.dupeZ(u8, "create table c_api_records (id integer)");
+    defer std.testing.allocator.free(create_sql);
+    const create_result = aq_connection_execute(raw_manager, connection_id, create_sql.ptr);
+    try std.testing.expect(create_result != 0);
+    try std.testing.expectEqual(aq_ok, aq_result_set_close(raw_manager, create_result));
+
+    const main_z = try std.testing.allocator.dupeZ(u8, "main");
+    defer std.testing.allocator.free(main_z);
+    const tables_id = aq_connection_get_tables(raw_manager, connection_id, null, main_z.ptr);
+    try std.testing.expect(tables_id != 0);
+    defer {
+        std.testing.expectEqual(aq_ok, aq_result_set_close(raw_manager, tables_id)) catch unreachable;
+    }
+
+    var row_count: u64 = 0;
+    try std.testing.expectEqual(aq_ok, aq_result_set_row_count(raw_manager, tables_id, &row_count));
+
+    var matched = false;
+    var row_index: usize = 0;
+    while (row_index < row_count) : (row_index += 1) {
+        var cell = AqResultCell{ .text_ptr = undefined, .text_len = 0, .is_null = 0 };
+        try std.testing.expectEqual(aq_ok, aq_result_set_value(raw_manager, tables_id, row_index, 2, &cell));
+        if (!std.mem.eql(u8, cell.text_ptr[0..cell.text_len], "c_api_records")) {
+            continue;
+        }
+
+        var qualified_name: AqQualifiedName = undefined;
+        try std.testing.expectEqual(aq_ok, aq_result_set_table_qualified_name(raw_manager, tables_id, row_index, &qualified_name));
+        try std.testing.expectEqual(@as(usize, 2), qualified_name.part_count);
+        try std.testing.expectEqualStrings("main.c_api_records", textFromPointer(qualified_name.formatted_ptr, qualified_name.formatted_len));
+        try std.testing.expectEqual(@as(i32, @intFromEnum(root.QualifiedNamePartRole.database)), qualified_name.parts[0].role);
+        try std.testing.expectEqualStrings("main", textFromPointer(qualified_name.parts[0].value_ptr, qualified_name.parts[0].value_len));
+        try std.testing.expectEqual(@as(i32, @intFromEnum(root.QualifiedNamePartRole.object)), qualified_name.parts[1].role);
+        try std.testing.expectEqualStrings("c_api_records", textFromPointer(qualified_name.parts[1].value_ptr, qualified_name.parts[1].value_len));
+        matched = true;
+        break;
+    }
+
+    try std.testing.expect(matched);
 }

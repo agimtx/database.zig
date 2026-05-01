@@ -24,6 +24,8 @@ if str(PYTHON_BINDING_ROOT) not in sys.path:
 _binding_module = importlib.import_module("aq_database")
 ConnectionManager = _binding_module.ConnectionManager
 ColumnType = _binding_module.ColumnType
+QualifiedName = _binding_module.QualifiedName
+QualifiedNamePartRole = _binding_module.QualifiedNamePartRole
 
 
 @dataclass(frozen=True)
@@ -209,6 +211,49 @@ async def execute_non_query(connection: object, sql: str) -> None:
 
 def read_result_set_values(result_set: object, column_index: int) -> list[object | None]:
     return [result_set.value(row_index, column_index) for row_index in range(result_set.row_count)]
+
+
+def find_result_set_row_index(result_set: object, column_index: int, expected_value: object) -> int:
+    for row_index in range(result_set.row_count):
+        if result_set.value(row_index, column_index) == expected_value:
+            return row_index
+
+    raise AssertionError(f"value not found in result set column {column_index}: {expected_value!r}")
+
+
+def _qualified_name_role_from_namespace_kind(namespace_kind: str) -> object:
+    mapping = {
+        "catalog": QualifiedNamePartRole.CATALOG,
+        "database": QualifiedNamePartRole.DATABASE,
+        "schema": QualifiedNamePartRole.SCHEMA,
+        "dataset": QualifiedNamePartRole.DATASET,
+        "namespace": QualifiedNamePartRole.NAMESPACE,
+        "object": QualifiedNamePartRole.OBJECT,
+    }
+    return mapping[namespace_kind]
+
+
+def assert_table_qualified_name(result_set: object, row_index: int) -> object:
+    qualified_name = result_set.table_qualified_name(row_index)
+    assert isinstance(qualified_name, QualifiedName)
+
+    expected_parts: list[tuple[object, str]] = []
+    catalog = result_set.value(row_index, 0)
+    namespace = result_set.value(row_index, 1)
+    object_name = result_set.value(row_index, 2)
+    namespace_kind = result_set.value(row_index, 4)
+    formatted = result_set.value(row_index, 5)
+
+    if catalog not in (None, ""):
+        expected_parts.append((QualifiedNamePartRole.CATALOG, catalog))
+    if namespace not in (None, ""):
+        expected_parts.append((_qualified_name_role_from_namespace_kind(namespace_kind), namespace))
+    if object_name not in (None, ""):
+        expected_parts.append((QualifiedNamePartRole.OBJECT, object_name))
+
+    assert [(part.role, part.value) for part in qualified_name.parts] == expected_parts
+    assert qualified_name.formatted == formatted
+    return qualified_name
 
 
 def assert_non_empty_value(value: object | None, label: str) -> None:

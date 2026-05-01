@@ -4,7 +4,7 @@ import datetime as dt
 import unittest
 from decimal import Decimal
 
-from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_non_empty_value, assert_type_coverage, execute_non_query, load_test_target, read_result_set_values, should_run_section, unique_identifier
+from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
 
 STARROCKS_ADDITIONAL_TYPES_SQL = (
@@ -186,6 +186,7 @@ class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     tables_result = await database_connection.get_tables_async(database=database_name)
                     try:
                         self.assertIn(table_name, read_result_set_values(tables_result, 2))
+                        assert_table_qualified_name(tables_result, find_result_set_row_index(tables_result, 2, table_name))
                     finally:
                         await tables_result.close_async()
                 finally:

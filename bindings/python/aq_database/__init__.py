@@ -1,4 +1,4 @@
-from .client import ColumnMetadata, ColumnType, Connection, ConnectionManager, Cursor, DriverKind, ResultSet
+from .client import ColumnMetadata, ColumnType, Connection, ConnectionManager, Cursor, DriverKind, QualifiedName, QualifiedNamePart, QualifiedNamePartRole, ResultSet
 
 __all__ = [
 	"ColumnMetadata",
@@ -7,5 +7,8 @@ __all__ = [
 	"ConnectionManager",
 	"Cursor",
 	"DriverKind",
+	"QualifiedName",
+	"QualifiedNamePart",
+	"QualifiedNamePartRole",
 	"ResultSet",
 ]

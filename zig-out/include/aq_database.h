@@ -60,6 +60,15 @@ enum aq_column_type {
     AQ_COLUMN_DURATION = 25
 };
 
+enum aq_qualified_name_part_role {
+    AQ_QUALIFIED_NAME_PART_CATALOG = 0,
+    AQ_QUALIFIED_NAME_PART_DATABASE = 1,
+    AQ_QUALIFIED_NAME_PART_SCHEMA = 2,
+    AQ_QUALIFIED_NAME_PART_DATASET = 3,
+    AQ_QUALIFIED_NAME_PART_NAMESPACE = 4,
+    AQ_QUALIFIED_NAME_PART_OBJECT = 5
+};
+
 struct aq_column_metadata {
     const uint8_t *name_ptr;
     uintptr_t name_len;
@@ -73,6 +82,19 @@ struct aq_result_cell {
     const uint8_t *text_ptr;
     uintptr_t text_len;
     uint8_t is_null;
+};
+
+struct aq_qualified_name_part {
+    int32_t role;
+    const uint8_t *value_ptr;
+    uintptr_t value_len;
+};
+
+struct aq_qualified_name {
+    uintptr_t part_count;
+    const uint8_t *formatted_ptr;
+    uintptr_t formatted_len;
+    struct aq_qualified_name_part parts[3];
 };
 
 struct aq_operation_result {
@@ -103,6 +125,7 @@ int32_t aq_result_set_affected_rows(void *manager, uint64_t result_set_id, uint6
 int32_t aq_result_set_column_count(void *manager, uint64_t result_set_id, uintptr_t *out_column_count);
 int32_t aq_result_set_column_metadata(void *manager, uint64_t result_set_id, uintptr_t column_index, struct aq_column_metadata *out_metadata);
 int32_t aq_result_set_value(void *manager, uint64_t result_set_id, uintptr_t row_index, uintptr_t column_index, struct aq_result_cell *out_cell);
+int32_t aq_result_set_table_qualified_name(void *manager, uint64_t result_set_id, uintptr_t row_index, struct aq_qualified_name *out_name);
 uint64_t aq_cursor_open(void *manager, uint64_t connection_id, const char *sql);
 uint64_t aq_cursor_open_async(void *manager, uint64_t connection_id, const char *sql);
 int32_t aq_cursor_next(void *manager, uint64_t cursor_id, uint8_t *out_has_row);

@@ -23,6 +23,25 @@ function convert(columnType, rawValue) {
 	return resultSet.value(0, 0);
 }
 
+test("node binding returns typed table qualified names", () => {
+	const manager = new FakeManager(bindingModule.COLUMN_TYPES.TEXT, "ignored");
+	manager._resultSetTableQualifiedName = () => new bindingModule.QualifiedName([
+		new bindingModule.QualifiedNamePart(bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE, "main"),
+		new bindingModule.QualifiedNamePart(bindingModule.QUALIFIED_NAME_PART_ROLES.OBJECT, "records"),
+	], "main.records");
+
+	const qualifiedName = new bindingModule.ResultSet(manager, 1).tableQualifiedName(0);
+	assert.ok(qualifiedName instanceof bindingModule.QualifiedName);
+	assert.equal(String(qualifiedName), "main.records");
+	assert.deepEqual(
+		qualifiedName.parts.map((part) => ({ role: part.role, value: part.value })),
+		[
+			{ role: bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE, value: "main" },
+			{ role: bindingModule.QUALIFIED_NAME_PART_ROLES.OBJECT, value: "records" },
+		],
+	);
+});
+
 test("node binding converts booleans", () => {
 	assert.equal(convert(bindingModule.COLUMN_TYPES.BOOLEAN, "true"), true);
 	assert.equal(convert(bindingModule.COLUMN_TYPES.BOOLEAN, "0"), false);

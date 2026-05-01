@@ -48,16 +48,38 @@ const COLUMN_TYPES = {
   DURATION: 25,
 };
 
+const QUALIFIED_NAME_PART_ROLES = Object.freeze({
+  CATALOG: 0,
+  DATABASE: 1,
+  SCHEMA: 2,
+  DATASET: 3,
+  NAMESPACE: 4,
+  OBJECT: 5,
+});
+
 const POINTER_SIZE = ref.sizeof.pointer;
 const SIZE_T_SIZE = ref.types.size_t.size;
+const INT32_SIZE = ref.types.int32.size;
 function alignStructSize(size) {
   const remainder = size % POINTER_SIZE;
   return remainder === 0 ? size : size + (POINTER_SIZE - remainder);
 }
 
+function alignOffset(offset, alignment) {
+  const remainder = offset % alignment;
+  return remainder === 0 ? offset : offset + (alignment - remainder);
+}
+
 const COLUMN_METADATA_SIZE = alignStructSize((POINTER_SIZE * 2) + (SIZE_T_SIZE * 2) + 4 + 1);
 const RESULT_CELL_SIZE = alignStructSize(POINTER_SIZE + SIZE_T_SIZE + 1);
 const OPERATION_RESULT_SIZE = 16;
+const QUALIFIED_NAME_PART_VALUE_PTR_OFFSET = alignOffset(INT32_SIZE, POINTER_SIZE);
+const QUALIFIED_NAME_PART_VALUE_LEN_OFFSET = QUALIFIED_NAME_PART_VALUE_PTR_OFFSET + POINTER_SIZE;
+const QUALIFIED_NAME_PART_SIZE = alignStructSize(QUALIFIED_NAME_PART_VALUE_LEN_OFFSET + SIZE_T_SIZE);
+const QUALIFIED_NAME_FORMATTED_PTR_OFFSET = alignOffset(SIZE_T_SIZE, POINTER_SIZE);
+const QUALIFIED_NAME_FORMATTED_LEN_OFFSET = QUALIFIED_NAME_FORMATTED_PTR_OFFSET + POINTER_SIZE;
+const QUALIFIED_NAME_PARTS_OFFSET = alignOffset(QUALIFIED_NAME_FORMATTED_LEN_OFFSET + SIZE_T_SIZE, POINTER_SIZE);
+const QUALIFIED_NAME_SIZE = alignStructSize(QUALIFIED_NAME_PARTS_OFFSET + (QUALIFIED_NAME_PART_SIZE * 3));
 
 function raiseOnStatus(status, operation) {
   if (status === 0) {
@@ -78,6 +100,14 @@ function readSizeT(buffer) {
   }
 
   return buffer.readUInt32LE(0);
+}
+
+function readSizeTAt(buffer, offset) {
+  if (SIZE_T_SIZE === 8) {
+    return Number(buffer.readBigUInt64LE(offset));
+  }
+
+  return buffer.readUInt32LE(offset);
 }
 
 function callAsync(fn, args) {
@@ -192,6 +222,44 @@ function readColumnMetadata(buffer) {
   };
 }
 
+class QualifiedNamePart {
+  constructor(role, value) {
+    this.role = role;
+    this.value = value;
+  }
+}
+
+class QualifiedName {
+  constructor(parts, formatted) {
+    this.parts = parts;
+    this.formatted = formatted;
+  }
+
+  toString() {
+    return this.formatted;
+  }
+}
+
+function readQualifiedName(buffer) {
+  const partCount = readSizeTAt(buffer, 0);
+  const formattedLength = readSizeTAt(buffer, QUALIFIED_NAME_FORMATTED_LEN_OFFSET);
+  const formatted = formattedLength > 0
+    ? ref.readPointer(buffer, QUALIFIED_NAME_FORMATTED_PTR_OFFSET, formattedLength).toString("utf8")
+    : "";
+
+  const parts = [];
+  for (let index = 0; index < partCount; index += 1) {
+    const baseOffset = QUALIFIED_NAME_PARTS_OFFSET + (index * QUALIFIED_NAME_PART_SIZE);
+    const valueLength = readSizeTAt(buffer, baseOffset + QUALIFIED_NAME_PART_VALUE_LEN_OFFSET);
+    const value = valueLength > 0
+      ? ref.readPointer(buffer, baseOffset + QUALIFIED_NAME_PART_VALUE_PTR_OFFSET, valueLength).toString("utf8")
+      : "";
+    parts.push(new QualifiedNamePart(buffer.readInt32LE(baseOffset), value));
+  }
+
+  return new QualifiedName(parts, formatted);
+}
+
 function resolveLibraryPath(explicitPath) {
   if (explicitPath) {
     return explicitPath;
@@ -238,6 +306,7 @@ class ConnectionManager {
       aq_result_set_column_count: ["int32", ["pointer", "uint64", "pointer"]],
       aq_result_set_column_metadata: ["int32", ["pointer", "uint64", "size_t", "pointer"]],
       aq_result_set_value: ["int32", ["pointer", "uint64", "size_t", "size_t", "pointer"]],
+      aq_result_set_table_qualified_name: ["int32", ["pointer", "uint64", "size_t", "pointer"]],
       aq_cursor_open: ["uint64", ["pointer", "uint64", "string"]],
       aq_cursor_open_async: ["uint64", ["pointer", "uint64", "string"]],
       aq_cursor_next: ["int32", ["pointer", "uint64", "pointer"]],
@@ -430,6 +499,15 @@ class ConnectionManager {
     return readResultCell(cellBuffer);
   }
 
+  _resultSetTableQualifiedName(resultSetId, rowIndex) {
+    const qualifiedNameBuffer = Buffer.alloc(QUALIFIED_NAME_SIZE);
+    this._raiseOnStatus(
+      this.lib.aq_result_set_table_qualified_name(this.manager, resultSetId, rowIndex, qualifiedNameBuffer),
+      "aq_result_set_table_qualified_name",
+    );
+    return readQualifiedName(qualifiedNameBuffer);
+  }
+
   _openCursorSync(connectionId, sql) {
     const cursorId = this.lib.aq_cursor_open(this.manager, connectionId, sql);
     if (cursorId === 0 || cursorId === 0n) {
@@ -613,6 +691,10 @@ class ResultSet {
     return convertResultValue(rawValue, this.columns[columnIndex].columnType);
   }
 
+  tableQualifiedName(rowIndex) {
+    return this.manager._resultSetTableQualifiedName(this.id, rowIndex);
+  }
+
   closeSync() {
     this.manager._resultSetClose(this.id);
   }
@@ -651,6 +733,9 @@ module.exports = {
   ConnectionManager,
   Cursor,
   DRIVER_KINDS,
+  QualifiedName,
+  QualifiedNamePart,
+  QUALIFIED_NAME_PART_ROLES,
   ResultSet,
   resolveLibraryPath,
 };
