@@ -156,6 +156,12 @@ class DuckDBBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     finally:
                         await databases_result.close_async()
 
+                    catalogs_result = await connection.get_catalogs_async()
+                    try:
+                        self.assertTrue(any(name not in (None, "") for name in read_result_set_values(catalogs_result, 0)))
+                    finally:
+                        await catalogs_result.close_async()
+
                     namespace_access = await connection.inspect_namespace_access_async(database="main")
                     assert_namespace_access(
                         namespace_access,

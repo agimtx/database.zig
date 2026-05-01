@@ -3,6 +3,7 @@ import test = require("node:test");
 
 import {
   assertBooleanValue,
+  assertErrorMessage,
   assertNamespaceAccess,
   assertTableQualifiedName,
   bindingLoadError,
@@ -107,6 +108,11 @@ test("test_postgres_flightsql", { skip: skipReason }, async () => {
         } finally {
           await databasesResult.close();
         }
+
+        await assert.rejects(
+          connection.getCatalogs(),
+          (error) => assertErrorMessage(error, /get catalogs is not supported/i),
+        );
 
         const tablesResult = await connection.getTables(null, "public");
         try {

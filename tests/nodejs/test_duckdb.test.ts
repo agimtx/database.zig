@@ -183,6 +183,15 @@ async function runDuckDbLifecycleTest(): Promise<string | null> {
         await databasesResult.close();
       }
 
+      const catalogsResult = await connection.getCatalogs();
+      try {
+        assert.ok(
+          readResultSetValues(catalogsResult, 0).some((catalogName) => catalogName !== null && catalogName !== ""),
+        );
+      } finally {
+        await catalogsResult.close();
+      }
+
       const namespaceAccess = await connection.inspectNamespaceAccess(null, "main");
       assertNamespaceAccess(namespaceAccess, {
         canGetSchema: true,

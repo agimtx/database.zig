@@ -28,3 +28,19 @@ path = "../../tests/rust/test_postgres_flightsql.rs"
 [[test]]
 name = "test_starrocks"
 path = "../../tests/rust/test_starrocks.rs"
+
+[[test]]
+name = "test_snowflake"
+path = "../../tests/rust/test_snowflake.rs"
+
+[[test]]
+name = "test_trino"
+path = "../../tests/rust/test_trino.rs"
+
+[[test]]
+name = "test_clickhouse"
+path = "../../tests/rust/test_clickhouse.rs"
+
+[[test]]
+name = "test_exasol"
+path = "../../tests/rust/test_exasol.rs"

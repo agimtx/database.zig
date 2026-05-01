@@ -87,6 +87,14 @@ fn rust_binding_duckdb_lifecycle() {
         assert!(database_names.contains(&Value::Text("main".to_owned())));
         databases.close()?;
 
+        let catalogs = connection.get_catalogs()?;
+        let catalog_names = read_values(&catalogs, 0)?;
+        assert!(catalog_names.iter().any(|value| match value {
+            Value::Text(text) => !text.is_empty(),
+            _ => false,
+        }));
+        catalogs.close()?;
+
         let namespace_access = connection.inspect_namespace_access(None, Some("main"))?;
         assert_namespace_access(
             &namespace_access,

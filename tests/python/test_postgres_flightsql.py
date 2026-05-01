@@ -78,6 +78,9 @@ class PostgresFlightSqlBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     finally:
                         await databases_result.close_async()
 
+                    with self.assertRaisesRegex(RuntimeError, "get catalogs is not supported"):
+                        await connection.get_catalogs_async()
+
                     tables_result = await connection.get_tables_async(database="public")
                     try:
                         table_names = read_result_set_values(tables_result, 2)

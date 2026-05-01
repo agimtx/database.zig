@@ -98,6 +98,12 @@ fn rust_binding_postgres_flightsql_connection() {
             assert!(database_names.contains(&Value::Text("public".to_owned())));
             databases_result.close()?;
 
+            let catalogs_error = match connection.get_catalogs() {
+                Ok(_) => panic!("flightsql targets should currently reject get_catalogs"),
+                Err(error) => error,
+            };
+            assert!(catalogs_error.to_string().contains("get catalogs is not supported"));
+
             let tables_result = connection.get_tables(None, Some("public"))?;
             let table_names = read_values(&tables_result, 2)?;
             assert!(table_names.contains(&Value::Text(table_name.clone())));
