@@ -64,6 +64,55 @@ function assertDuckDbTypeCoverageValues(resultSet) {
 	assert.match(resultSet.value(0, 7), /^2024-01-02T03:04:05(?:\.\d+)?$/);
 }
 
+async function assertDuckDbAdditionalTypeCoverage(connection) {
+	const resultSet = await connection.execute(
+		"select " +
+		"cast(123.45 as decimal(10, 2)) as decimal_value, " +
+		"'0102ff'::blob as binary_value, " +
+		"'550e8400-e29b-41d4-a716-446655440000'::uuid as uuid_value, " +
+		"json('{\"enabled\":true,\"count\":1}') as json_value, " +
+		"interval '1 day 2 seconds' as interval_value, " +
+		"[1,2,3] as array_value, " +
+		"{'name': 'alpha', 'enabled': true} as struct_value, " +
+		"map(['a','b'], [1,2]) as map_value, " +
+		"'alpha'::enum ('alpha', 'beta') as enum_value, " +
+		"170141183460469231731687303715884105727::hugeint as hugeint_value, " +
+		"18446744073709551615::ubigint as ubigint_value, " +
+		"timestamptz '2024-01-02 03:04:05+02' as timestamptz_value",
+	);
+	try {
+		assertColumnMetadata(resultSet.columns, [
+			{ name: "decimal_value", type: bindingModule.COLUMN_TYPES.DECIMAL },
+			{ name: "binary_value", type: bindingModule.COLUMN_TYPES.BINARY },
+			{ name: "uuid_value", type: bindingModule.COLUMN_TYPES.TEXT },
+			{ name: "json_value", type: bindingModule.COLUMN_TYPES.TEXT },
+			{ name: "interval_value", type: bindingModule.COLUMN_TYPES.INTERVAL },
+			{ name: "array_value", type: bindingModule.COLUMN_TYPES.ARRAY },
+			{ name: "struct_value", type: bindingModule.COLUMN_TYPES.STRUCT },
+			{ name: "map_value", type: bindingModule.COLUMN_TYPES.MAP },
+			{ name: "enum_value", type: bindingModule.COLUMN_TYPES.TEXT },
+			{ name: "hugeint_value", type: bindingModule.COLUMN_TYPES.DECIMAL },
+			{ name: "ubigint_value", type: bindingModule.COLUMN_TYPES.UINT64 },
+			{ name: "timestamptz_value", type: bindingModule.COLUMN_TYPES.TIMESTAMP },
+		]);
+		assert.ok(resultSet.columns.every((column) => column.rawType === null));
+		assert.equal(resultSet.value(0, 0), "123.45");
+		assert.deepEqual(resultSet.value(0, 1), Buffer.from("0102ff"));
+		assert.equal(resultSet.value(0, 2), "550e8400-e29b-41d4-a716-446655440000");
+		assert.equal(resultSet.value(0, 3), '{"enabled":true,"count":1}');
+		assert.equal(resultSet.value(0, 4), "P0M1DT00:00:02.000000000");
+		assert.deepEqual(resultSet.value(0, 5), [1, 2, 3]);
+		assert.deepEqual(resultSet.value(0, 6), { name: "alpha", enabled: true });
+		assert.deepEqual(resultSet.value(0, 7), [{ key: "a", value: 1 }, { key: "b", value: 2 }]);
+		assert.equal(resultSet.value(0, 8), "alpha");
+		assert.equal(resultSet.value(0, 9), "170141183460469231731687303715884105727");
+		assert.equal(resultSet.value(0, 10), 18446744073709551615n);
+		assert.equal(resultSet.value(0, 11), "2024-01-02T01:04:05.000000");
+	} finally {
+		await resultSet.close();
+	}
+}
+
 function isDuckDbRuntimeUnavailable(error) {
 	return error instanceof Error && (error.message.includes("Could not load") || error.message.includes("Library not loaded"));
 }
@@ -89,6 +138,7 @@ async function runDuckDbLifecycleTest() {
 			assert.equal(await connection.test(), true);
 
 			const typeCoverage = await assertTypeCoverage(connection, buildDuckDbTypeCoverageCase(tableName), assertDuckDbTypeCoverageValues);
+			await assertDuckDbAdditionalTypeCoverage(connection);
 
 			const missingTable = uniqueIdentifier("missing");
 			await assert.rejects(

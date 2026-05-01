@@ -23,14 +23,24 @@ pub const ColumnType = enum(i32) {
     time = 10,
     interval = 11,
     uuid = 12,
-    xml = 13,
-    array = 14,
-    map = 15,
-    struct_ = 16,
+    array = 13,
+    map = 14,
+    struct_ = 15,
+    int8 = 16,
+    uint8 = 17,
+    int16 = 18,
+    uint16 = 19,
+    int32 = 20,
+    uint32 = 21,
+    uint64 = 22,
+    float16 = 23,
+    float32 = 24,
+    duration = 25,
 };
 
 pub const ColumnMetadata = struct {
     name: []const u8,
+    raw_type: ?[]const u8 = null,
     column_type: ColumnType = .unknown,
     nullable: bool = true,
 };

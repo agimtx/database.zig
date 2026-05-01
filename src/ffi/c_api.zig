@@ -25,6 +25,8 @@ pub const AqOperationState = enum(u8) {
 pub const AqColumnMetadata = extern struct {
     name_ptr: [*]const u8,
     name_len: usize,
+    raw_type_ptr: ?[*]const u8,
+    raw_type_len: usize,
     column_type: i32,
     nullable: u8,
 };
@@ -78,6 +80,8 @@ fn fillColumnMetadata(out_metadata: *AqColumnMetadata, metadata: root.ColumnMeta
     out_metadata.* = .{
         .name_ptr = metadata.name.ptr,
         .name_len = metadata.name.len,
+        .raw_type_ptr = if (metadata.raw_type) |raw_type| raw_type.ptr else null,
+        .raw_type_len = if (metadata.raw_type) |raw_type| raw_type.len else 0,
         .column_type = @intFromEnum(metadata.column_type),
         .nullable = if (metadata.nullable) 1 else 0,
     };

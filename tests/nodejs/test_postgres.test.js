@@ -59,10 +59,10 @@ function buildPostgresTypeCoverageCase(tableName) {
 			{ name: "date_value", type: bindingModule.COLUMN_TYPES.DATE },
 			{ name: "time_value", type: bindingModule.COLUMN_TYPES.TIME },
 			{ name: "interval_value", type: bindingModule.COLUMN_TYPES.INTERVAL },
-			{ name: "uuid_value", type: bindingModule.COLUMN_TYPES.UUID },
-			{ name: "xml_value", type: bindingModule.COLUMN_TYPES.XML },
+			{ name: "uuid_value", type: bindingModule.COLUMN_TYPES.UUID, rawType: "uuid" },
+			{ name: "xml_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "xml" },
 			{ name: "array_value", type: bindingModule.COLUMN_TYPES.ARRAY },
-			{ name: "inet_value", type: bindingModule.COLUMN_TYPES.TEXT },
+			{ name: "inet_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "inet" },
 			{ name: "timestamp_value", type: bindingModule.COLUMN_TYPES.TIMESTAMP },
 			{ name: "json_value", type: [bindingModule.COLUMN_TYPES.JSON, bindingModule.COLUMN_TYPES.TEXT] },
 		],
@@ -109,6 +109,15 @@ const POSTGRES_ADDITIONAL_TYPES_SQL =
 	"time with time zone '03:04:05+02' as timetz_value, " +
 	"timestamptz '2024-01-02 03:04:05+02' as timestamptz_value";
 
+const POSTGRES_RANGE_AND_SYSTEM_TYPES_SQL =
+	"select " +
+	"int4range(1,5) as range_value, " +
+	"int4multirange(int4range(1,5), int4range(7,9)) as multirange_value, " +
+	"42::oid as oid_value, " +
+	"'pg_type'::regclass as regclass_value, " +
+	"'(1,2)'::tid as tid_value, " +
+	"'0/16B6C50'::pg_lsn as lsn_value";
+
 async function assertPostgresAdditionalTypeCoverage(connection) {
 	const enumName = uniqueIdentifier("status_enum");
 	const createType = await connection.execute(`create type ${enumName} as enum ('new', 'done')`);
@@ -134,14 +143,14 @@ async function assertPostgresAdditionalTypeCoverage(connection) {
 			{ name: "money_value", type: bindingModule.COLUMN_TYPES.INT64 },
 			{ name: "bit_value", type: bindingModule.COLUMN_TYPES.BINARY },
 			{ name: "varbit_value", type: bindingModule.COLUMN_TYPES.BINARY },
-			{ name: "cidr_value", type: bindingModule.COLUMN_TYPES.TEXT },
-			{ name: "macaddr_value", type: bindingModule.COLUMN_TYPES.TEXT },
-			{ name: "macaddr8_value", type: bindingModule.COLUMN_TYPES.TEXT },
-			{ name: "tsv_value", type: bindingModule.COLUMN_TYPES.BINARY },
-			{ name: "tsq_value", type: bindingModule.COLUMN_TYPES.BINARY },
-			{ name: "point_value", type: bindingModule.COLUMN_TYPES.BINARY },
-			{ name: "box_value", type: bindingModule.COLUMN_TYPES.BINARY },
-			{ name: "regtype_value", type: bindingModule.COLUMN_TYPES.BINARY },
+			{ name: "cidr_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "cidr" },
+			{ name: "macaddr_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "macaddr" },
+			{ name: "macaddr8_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "macaddr8" },
+			{ name: "tsv_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "tsvector" },
+			{ name: "tsq_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "tsquery" },
+			{ name: "point_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "point" },
+			{ name: "box_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "box" },
+			{ name: "regtype_value", type: bindingModule.COLUMN_TYPES.BINARY, rawType: "regtype" },
 			{ name: "timetz_value", type: bindingModule.COLUMN_TYPES.TIME },
 			{ name: "timestamptz_value", type: bindingModule.COLUMN_TYPES.TIMESTAMP },
 		]);
@@ -149,13 +158,49 @@ async function assertPostgresAdditionalTypeCoverage(connection) {
 		assert.equal(resultSet.value(0, 3), "10.0.0.0/24");
 		assert.equal(resultSet.value(0, 4), "08:00:2b:01:02:03");
 		assert.equal(resultSet.value(0, 5), "08:00:2b:01:02:03:04:05");
+		assert.equal(resultSet.value(0, 6), "'hello':1 'world':2");
+		assert.equal(resultSet.value(0, 7), "'hello' & 'world'");
+		assert.equal(resultSet.value(0, 8), "(1,2)");
+		assert.equal(resultSet.value(0, 9), "(1,1),(0,0)");
+		assert.deepEqual(resultSet.value(0, 10), Buffer.from([0x23]));
 		assert.equal(resultSet.value(0, 12), "2024-01-02T01:04:05.000000");
 
-		for (const [index, label] of [[1, "bit_value"], [2, "varbit_value"], [6, "tsv_value"], [7, "tsq_value"], [8, "point_value"], [9, "box_value"], [10, "regtype_value"], [11, "timetz_value"]]) {
+		for (const [index, label] of [[1, "bit_value"], [2, "varbit_value"], [11, "timetz_value"]]) {
 			assertHexValue(resultSet.value(0, index), label);
 		}
 	} finally {
 		await resultSet.close();
+	}
+
+	const rangeResult = await connection.execute(POSTGRES_RANGE_AND_SYSTEM_TYPES_SQL);
+	try {
+		assertColumnMetadata(rangeResult.columns, [
+			{ name: "range_value", type: bindingModule.COLUMN_TYPES.BINARY },
+			{ name: "multirange_value", type: bindingModule.COLUMN_TYPES.BINARY },
+			{ name: "oid_value", type: bindingModule.COLUMN_TYPES.INT32 },
+			{ name: "regclass_value", type: bindingModule.COLUMN_TYPES.BINARY, rawType: "regclass" },
+			{ name: "tid_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "tid" },
+			{ name: "lsn_value", type: bindingModule.COLUMN_TYPES.UNKNOWN, rawType: "pg_lsn" },
+		]);
+		assert.deepEqual(rangeResult.value(0, 0), Buffer.from("0200000004000000010000000400000005", "hex"));
+		assert.deepEqual(
+			rangeResult.value(0, 1),
+			Buffer.from("00000002000000110200000004000000010000000400000005000000110200000004000000070000000400000009", "hex"),
+		);
+		assert.equal(rangeResult.value(0, 2), 42);
+		assert.deepEqual(rangeResult.value(0, 3), Buffer.from([0x12, 0x47]));
+		assert.equal(rangeResult.value(0, 4), "(1,2)");
+		assert.equal(rangeResult.value(0, 5), "0/16B6C50");
+	} finally {
+		await rangeResult.close();
+	}
+
+	const pseudoResult = await connection.execute("select null::anyelement as pseudo_value");
+	try {
+		assertColumnMetadata(pseudoResult.columns, [{ name: "pseudo_value", type: bindingModule.COLUMN_TYPES.TEXT }]);
+		assert.equal(pseudoResult.value(0, 0), null);
+	} finally {
+		await pseudoResult.close();
 	}
 
 	await assert.rejects(

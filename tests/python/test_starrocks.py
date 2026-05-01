@@ -20,6 +20,13 @@ STARROCKS_ADDITIONAL_TYPES_SQL = (
     "row(1, 'alpha') as struct_value"
 )
 
+STARROCKS_SKETCH_TYPES_SQL = (
+    "select "
+    "to_bitmap(42) as bitmap_value, "
+    "hll_hash('alpha') as hll_value, "
+    "percentile_hash(42) as percentile_value"
+)
+
 
 def build_starrocks_type_coverage_case(table_name: str) -> dict[str, object]:
     return {
@@ -53,7 +60,7 @@ def build_starrocks_type_coverage_case(table_name: str) -> dict[str, object]:
         ),
         "expected_columns": [
             {"name": "id", "column_type": ColumnType.INT64},
-            {"name": "bool_value", "column_type": [ColumnType.BOOLEAN, ColumnType.INT64]},
+            {"name": "bool_value", "column_type": [ColumnType.BOOLEAN, ColumnType.INT8]},
             {"name": "int_value", "column_type": ColumnType.INT64},
             {"name": "float_value", "column_type": ColumnType.FLOAT64},
             {"name": "text_value", "column_type": ColumnType.TEXT},
@@ -99,16 +106,17 @@ async def assert_starrocks_additional_type_coverage(connection: object) -> None:
     result_set = await connection.execute_async(STARROCKS_ADDITIONAL_TYPES_SQL)
     try:
         assert_column_metadata(result_set.columns, [
-            {"name": "tiny_value", "column_type": ColumnType.INT64},
-            {"name": "small_value", "column_type": ColumnType.INT64},
-            {"name": "int_value", "column_type": ColumnType.INT64},
+            {"name": "tiny_value", "column_type": ColumnType.INT8},
+            {"name": "small_value", "column_type": ColumnType.INT16},
+            {"name": "int_value", "column_type": ColumnType.INT32},
             {"name": "big_value", "column_type": ColumnType.INT64},
-            {"name": "float_value", "column_type": ColumnType.FLOAT64},
+            {"name": "float_value", "column_type": ColumnType.FLOAT32},
             {"name": "double_value", "column_type": ColumnType.FLOAT64},
             {"name": "array_value", "column_type": ColumnType.TEXT},
             {"name": "map_value", "column_type": ColumnType.TEXT},
             {"name": "struct_value", "column_type": ColumnType.TEXT},
         ])
+        assert all(column.raw_type is None for column in result_set.columns)
         assert result_set.value(0, 0) == 1
         assert result_set.value(0, 1) == 2
         assert result_set.value(0, 2) == 3
@@ -118,6 +126,19 @@ async def assert_starrocks_additional_type_coverage(connection: object) -> None:
         assert result_set.value(0, 6) == "[1,2,3]"
         assert result_set.value(0, 7) == '{"a":1,"b":2}'
         assert result_set.value(0, 8) == '{"col1":1,"col2":"alpha"}'
+    finally:
+        await result_set.close_async()
+
+    result_set = await connection.execute_async(STARROCKS_SKETCH_TYPES_SQL)
+    try:
+        assert_column_metadata(result_set.columns, [
+            {"name": "bitmap_value", "column_type": ColumnType.TEXT},
+            {"name": "hll_value", "column_type": ColumnType.TEXT},
+            {"name": "percentile_value", "column_type": ColumnType.BINARY},
+        ])
+        assert result_set.value(0, 0) is None
+        assert result_set.value(0, 1) is None
+        assert result_set.value(0, 2) is None
     finally:
         await result_set.close_async()
 

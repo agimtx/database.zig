@@ -32,8 +32,20 @@ test("node binding converts int64 to bigint", () => {
 	assert.equal(convert(bindingModule.COLUMN_TYPES.INT64, "42"), 42n);
 });
 
+test("node binding converts int32 to number", () => {
+	assert.equal(convert(bindingModule.COLUMN_TYPES.INT32, "42"), 42);
+});
+
+test("node binding converts uint64 to bigint", () => {
+	assert.equal(convert(bindingModule.COLUMN_TYPES.UINT64, "42"), 42n);
+});
+
 test("node binding converts float64 to number", () => {
 	assert.equal(convert(bindingModule.COLUMN_TYPES.FLOAT64, "3.5"), 3.5);
+});
+
+test("node binding converts float32 to number", () => {
+	assert.equal(convert(bindingModule.COLUMN_TYPES.FLOAT32, "3.5"), 3.5);
 });
 
 test("node binding converts binary to buffer", () => {

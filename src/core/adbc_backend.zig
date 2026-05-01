@@ -722,8 +722,10 @@ fn columnsFromSchema(allocator: std.mem.Allocator, schema: *ArrowSchema) ![]type
     for (0..child_count) |index| {
         const child = schema.children[index] orelse return Error.QueryFailed;
         const name = if (child.name) |raw_name| std.mem.span(raw_name) else "";
+        const raw_type = rawTypeFromSchema(child);
         columns[index] = .{
             .name = try allocator.dupe(u8, name),
+            .raw_type = if (raw_type) |value| try allocator.dupe(u8, value) else null,
             .column_type = mapArrowSchemaToColumnType(child),
             .nullable = (child.flags & arrow_flag_nullable) != 0,
         };
@@ -937,10 +939,98 @@ fn extractArrowValueText(
         'z' => formatArrowBinary(allocator, i32, array, row_index),
         'Z' => formatArrowBinary(allocator, i64, array, row_index),
         'w' => formatArrowFixedBinary(allocator, format, array, row_index),
-        'd' => formatArrowBinaryWord(allocator, 16, array, row_index),
+        'd' => formatArrowDecimal(allocator, format, array, row_index),
         'T' => formatArrowInt(allocator, i64, array, row_index),
         else => allocator.alloc(u8, 0),
     };
+}
+
+const DecimalFormat = struct {
+    scale: usize,
+    byte_width: usize,
+};
+
+fn formatArrowDecimal(
+    allocator: std.mem.Allocator,
+    format: []const u8,
+    array: *ArrowArray,
+    row_index: usize,
+) ![]u8 {
+    const decimal_format = parseArrowDecimalFormat(format) orelse return formatArrowBinaryWord(allocator, 16, array, row_index);
+    if (decimal_format.byte_width > 16) {
+        return formatArrowBinaryWord(allocator, decimal_format.byte_width, array, row_index);
+    }
+    if (array.buffers == null or array.buffers[1] == null) {
+        return Error.QueryFailed;
+    }
+
+    const logical_index = row_index + @as(usize, @intCast(array.offset));
+    const values: [*]const u8 = @ptrCast(array.buffers[1].?);
+    const start = logical_index * decimal_format.byte_width;
+    const bytes = values[start .. start + decimal_format.byte_width];
+    const value = try decodeSignedLittleEndianDecimal(bytes);
+    return formatScaledDecimal(allocator, value, decimal_format.scale);
+}
+
+fn parseArrowDecimalFormat(format: []const u8) ?DecimalFormat {
+    if (format.len == 0 or format[0] != 'd') return null;
+    if (format.len == 1) return .{ .scale = 0, .byte_width = 16 };
+    if (format[1] != ':') return null;
+
+    var parts = std.mem.splitScalar(u8, format[2..], ',');
+    _ = parts.next() orelse return null;
+    const scale_text = parts.next() orelse return null;
+    const scale = std.fmt.parseInt(usize, scale_text, 10) catch return null;
+
+    const bit_width = if (parts.next()) |bit_width_text|
+        std.fmt.parseInt(usize, bit_width_text, 10) catch return null
+    else
+        128;
+
+    if (bit_width == 0 or bit_width % 8 != 0) return null;
+    return .{ .scale = scale, .byte_width = bit_width / 8 };
+}
+
+fn decodeSignedLittleEndianDecimal(bytes: []const u8) !i128 {
+    if (bytes.len == 0 or bytes.len > 16) return Error.QueryFailed;
+
+    var bits: u128 = 0;
+    for (bytes, 0..) |byte, index| {
+        bits |= @as(u128, byte) << @intCast(index * 8);
+    }
+
+    const bit_count = bytes.len * 8;
+    if (bit_count < 128 and (bytes[bytes.len - 1] & 0x80) != 0) {
+        bits |= (~@as(u128, 0)) << @intCast(bit_count);
+    }
+
+    return @bitCast(bits);
+}
+
+fn formatScaledDecimal(allocator: std.mem.Allocator, value: i128, scale: usize) ![]u8 {
+    const bits: u128 = @bitCast(value);
+    const negative = value < 0;
+    const magnitude: u128 = if (negative) (~bits + 1) else bits;
+    const digits = try std.fmt.allocPrint(allocator, "{}", .{magnitude});
+    defer allocator.free(digits);
+
+    if (scale == 0) {
+        if (!negative) return allocator.dupe(u8, digits);
+        return std.fmt.allocPrint(allocator, "-{s}", .{digits});
+    }
+
+    const whole_len = if (digits.len > scale) digits.len - scale else 0;
+    const whole = if (whole_len == 0) "0" else digits[0..whole_len];
+    const fractional = if (whole_len == digits.len) "" else digits[whole_len..];
+    const zero_padding_len = if (digits.len >= scale) 0 else scale - digits.len;
+    const zero_padding = try allocator.alloc(u8, zero_padding_len);
+    defer allocator.free(zero_padding);
+    @memset(zero_padding, '0');
+
+    if (!negative) {
+        return std.fmt.allocPrint(allocator, "{s}.{s}{s}", .{ whole, zero_padding, fractional });
+    }
+    return std.fmt.allocPrint(allocator, "-{s}.{s}{s}", .{ whole, zero_padding, fractional });
 }
 
 fn formatArrowBool(allocator: std.mem.Allocator, array: *ArrowArray, row_index: usize) ![]u8 {
@@ -1541,7 +1631,24 @@ fn appendArrowJsonValue(
     }
 
     switch (mapArrowSchemaToColumnType(schema)) {
-        .boolean, .int64, .float64, .decimal, .json, .array, .map, .struct_ => try builder.appendSlice(allocator, cell.text),
+        .boolean,
+        .int8,
+        .uint8,
+        .int16,
+        .uint16,
+        .int32,
+        .uint32,
+        .int64,
+        .uint64,
+        .float16,
+        .float32,
+        .float64,
+        .decimal,
+        .json,
+        .array,
+        .map,
+        .struct_,
+        => try builder.appendSlice(allocator, cell.text),
         else => try appendJsonQuoted(allocator, builder, cell.text),
     }
 }
@@ -1590,6 +1697,27 @@ fn extractOpaqueValueText(
     }
     if (std.mem.eql(u8, typname, "macaddr") or std.mem.eql(u8, typname, "macaddr8")) {
         return try formatMacAddressBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "tsvector")) {
+        return try formatPostgresTsVectorBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "tsquery")) {
+        return try formatPostgresTsQueryBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "point")) {
+        return try formatPostgresPointBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "box")) {
+        return try formatPostgresBoxBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "pg_lsn")) {
+        return try formatPostgresLsnBytes(allocator, bytes);
+    }
+    if (std.mem.eql(u8, typname, "tid")) {
+        return try formatPostgresTidBytes(allocator, bytes);
+    }
+    if (isPostgresOidLikeType(typname)) {
+        return try formatPostgresOidLikeBytes(allocator, bytes);
     }
     return null;
 }
@@ -1646,6 +1774,330 @@ fn formatMacAddressBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 
     return builder.toOwnedSlice(allocator);
 }
 
+const PostgresTsQueryOperatorKind = enum(u8) {
+    not_ = 1,
+    and_ = 2,
+    or_ = 3,
+    phrase = 4,
+};
+
+const PostgresTsQueryValue = struct {
+    operand: []const u8,
+    weight: u8,
+    prefix: bool,
+};
+
+const PostgresTsQueryOperator = struct {
+    kind: PostgresTsQueryOperatorKind,
+    distance: u16 = 1,
+};
+
+const PostgresTsQueryItem = union(enum) {
+    value: PostgresTsQueryValue,
+    op: PostgresTsQueryOperator,
+};
+
+const RenderedPostgresTsQuery = struct {
+    text: []u8,
+    next_index: usize,
+    precedence: u8,
+};
+
+fn formatPostgresTsVectorBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    var offset: usize = 0;
+    const lexeme_count = try readPostgresU32(bytes, &offset);
+
+    var builder = std.ArrayList(u8).empty;
+    defer builder.deinit(allocator);
+    var writer = builder.writer(allocator);
+
+    var lexeme_index: usize = 0;
+    while (lexeme_index < lexeme_count) : (lexeme_index += 1) {
+        if (lexeme_index != 0) try builder.append(allocator, ' ');
+
+        const lexeme = try readPostgresCString(bytes, &offset);
+        const positions_count = @as(usize, try readPostgresU16(bytes, &offset));
+
+        try appendPostgresQuotedLexeme(allocator, &builder, lexeme);
+        if (positions_count == 0) continue;
+
+        try builder.append(allocator, ':');
+        var position_index: usize = 0;
+        while (position_index < positions_count) : (position_index += 1) {
+            if (position_index != 0) try builder.append(allocator, ',');
+
+            const raw_position = try readPostgresU16(bytes, &offset);
+            try writer.print("{}", .{raw_position & 0x3fff});
+
+            const weight = raw_position >> 14;
+            if (weight != 0) {
+                try builder.append(allocator, 'D' - @as(u8, @intCast(weight)));
+            }
+        }
+    }
+
+    if (offset != bytes.len) return Error.QueryFailed;
+    return builder.toOwnedSlice(allocator);
+}
+
+fn formatPostgresTsQueryBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    var offset: usize = 0;
+    const item_count = @as(usize, try readPostgresU32(bytes, &offset));
+
+    var items = std.ArrayList(PostgresTsQueryItem).empty;
+    defer items.deinit(allocator);
+    try items.ensureTotalCapacity(allocator, item_count);
+
+    var item_index: usize = 0;
+    while (item_index < item_count) : (item_index += 1) {
+        const item_type = try readPostgresU8(bytes, &offset);
+        switch (item_type) {
+            1 => {
+                const weight = try readPostgresU8(bytes, &offset);
+                const prefix = (try readPostgresU8(bytes, &offset)) != 0;
+                const operand = try readPostgresCString(bytes, &offset);
+                items.appendAssumeCapacity(.{ .value = .{
+                    .operand = operand,
+                    .weight = weight,
+                    .prefix = prefix,
+                } });
+            },
+            2 => {
+                const operator_kind = std.meta.intToEnum(PostgresTsQueryOperatorKind, try readPostgresU8(bytes, &offset)) catch return Error.QueryFailed;
+                const distance: u16 = if (operator_kind == .phrase) try readPostgresU16(bytes, &offset) else 1;
+                items.appendAssumeCapacity(.{ .op = .{
+                    .kind = operator_kind,
+                    .distance = distance,
+                } });
+            },
+            else => return Error.QueryFailed,
+        }
+    }
+
+    if (offset != bytes.len) return Error.QueryFailed;
+
+    const rendered = try renderPostgresTsQuery(allocator, items.items, 0);
+    if (rendered.next_index != items.items.len) {
+        allocator.free(rendered.text);
+        return Error.QueryFailed;
+    }
+    return rendered.text;
+}
+
+fn renderPostgresTsQuery(
+    allocator: std.mem.Allocator,
+    items: []const PostgresTsQueryItem,
+    index: usize,
+) !RenderedPostgresTsQuery {
+    if (index >= items.len) return Error.QueryFailed;
+
+    return switch (items[index]) {
+        .value => |value| .{
+            .text = try formatPostgresTsQueryValue(allocator, value),
+            .next_index = index + 1,
+            .precedence = 5,
+        },
+        .op => |operator| switch (operator.kind) {
+            .not_ => {
+                const child = try renderPostgresTsQuery(allocator, items, index + 1);
+                defer allocator.free(child.text);
+
+                var builder = std.ArrayList(u8).empty;
+                defer builder.deinit(allocator);
+
+                try builder.append(allocator, '!');
+                if (child.precedence < 4) try builder.append(allocator, '(');
+                try builder.appendSlice(allocator, child.text);
+                if (child.precedence < 4) try builder.append(allocator, ')');
+
+                return .{
+                    .text = try builder.toOwnedSlice(allocator),
+                    .next_index = child.next_index,
+                    .precedence = 4,
+                };
+            },
+            .and_, .or_, .phrase => {
+                const right = try renderPostgresTsQuery(allocator, items, index + 1);
+                defer allocator.free(right.text);
+                const left = try renderPostgresTsQuery(allocator, items, right.next_index);
+                defer allocator.free(left.text);
+
+                const precedence: u8 = switch (operator.kind) {
+                    .or_ => 1,
+                    .and_ => 2,
+                    .phrase => 3,
+                    else => unreachable,
+                };
+                const operator_text = switch (operator.kind) {
+                    .or_ => " | ",
+                    .and_ => " & ",
+                    .phrase => if (operator.distance == 1)
+                        " <-> "
+                    else
+                        try std.fmt.allocPrint(allocator, " <{}> ", .{operator.distance}),
+                    else => unreachable,
+                };
+                defer if (operator.kind == .phrase and operator.distance != 1) allocator.free(operator_text);
+
+                var builder = std.ArrayList(u8).empty;
+                defer builder.deinit(allocator);
+
+                if (left.precedence < precedence) try builder.append(allocator, '(');
+                try builder.appendSlice(allocator, left.text);
+                if (left.precedence < precedence) try builder.append(allocator, ')');
+
+                try builder.appendSlice(allocator, operator_text);
+
+                if (right.precedence < precedence) try builder.append(allocator, '(');
+                try builder.appendSlice(allocator, right.text);
+                if (right.precedence < precedence) try builder.append(allocator, ')');
+
+                return .{
+                    .text = try builder.toOwnedSlice(allocator),
+                    .next_index = left.next_index,
+                    .precedence = precedence,
+                };
+            },
+        },
+    };
+}
+
+fn formatPostgresTsQueryValue(allocator: std.mem.Allocator, value: PostgresTsQueryValue) ![]u8 {
+    var builder = std.ArrayList(u8).empty;
+    defer builder.deinit(allocator);
+
+    try appendPostgresQuotedLexeme(allocator, &builder, value.operand);
+    if (value.weight != 0 or value.prefix) {
+        try builder.append(allocator, ':');
+        if ((value.weight & 0x08) != 0) try builder.append(allocator, 'A');
+        if ((value.weight & 0x04) != 0) try builder.append(allocator, 'B');
+        if ((value.weight & 0x02) != 0) try builder.append(allocator, 'C');
+        if ((value.weight & 0x01) != 0) try builder.append(allocator, 'D');
+        if (value.prefix) try builder.append(allocator, '*');
+    }
+
+    return builder.toOwnedSlice(allocator);
+}
+
+fn appendPostgresQuotedLexeme(
+    allocator: std.mem.Allocator,
+    builder: *std.ArrayList(u8),
+    lexeme: []const u8,
+) !void {
+    try builder.append(allocator, '\'');
+    for (lexeme) |character| {
+        if (character == '\'' or character == '\\') {
+            try builder.append(allocator, character);
+        }
+        try builder.append(allocator, character);
+    }
+    try builder.append(allocator, '\'');
+}
+
+fn formatPostgresPointBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len != 16) return Error.QueryFailed;
+    const x = try readPostgresFloat64(bytes, 0);
+    const y = try readPostgresFloat64(bytes, 8);
+    return std.fmt.allocPrint(allocator, "({d},{d})", .{ x, y });
+}
+
+fn formatPostgresBoxBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len != 32) return Error.QueryFailed;
+    const high_x = try readPostgresFloat64(bytes, 0);
+    const high_y = try readPostgresFloat64(bytes, 8);
+    const low_x = try readPostgresFloat64(bytes, 16);
+    const low_y = try readPostgresFloat64(bytes, 24);
+    return std.fmt.allocPrint(allocator, "({d},{d}),({d},{d})", .{ high_x, high_y, low_x, low_y });
+}
+
+fn readPostgresU8(bytes: []const u8, offset: *usize) !u8 {
+    if (bytes.len - offset.* < 1) return Error.QueryFailed;
+    const value = bytes[offset.*];
+    offset.* += 1;
+    return value;
+}
+
+fn readPostgresU16(bytes: []const u8, offset: *usize) !u16 {
+    if (bytes.len - offset.* < 2) return Error.QueryFailed;
+    const value = std.mem.readInt(u16, @ptrCast(bytes[offset.* .. offset.* + 2]), .big);
+    offset.* += 2;
+    return value;
+}
+
+fn readPostgresU32(bytes: []const u8, offset: *usize) !u32 {
+    if (bytes.len - offset.* < 4) return Error.QueryFailed;
+    const value = std.mem.readInt(u32, @ptrCast(bytes[offset.* .. offset.* + 4]), .big);
+    offset.* += 4;
+    return value;
+}
+
+fn readPostgresCString(bytes: []const u8, offset: *usize) ![]const u8 {
+    if (offset.* > bytes.len) return Error.QueryFailed;
+    const remaining = bytes[offset.*..];
+    const terminator_index = std.mem.indexOfScalar(u8, remaining, 0) orelse return Error.QueryFailed;
+    const text = remaining[0..terminator_index];
+    offset.* += terminator_index + 1;
+    return text;
+}
+
+fn readPostgresFloat64(bytes: []const u8, start: usize) !f64 {
+    if (bytes.len - start < 8) return Error.QueryFailed;
+    const bits = std.mem.readInt(u64, @ptrCast(bytes[start .. start + 8]), .big);
+    return @bitCast(bits);
+}
+
+fn formatPostgresLsnBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len != 8) return Error.QueryFailed;
+    const value = std.mem.readInt(u64, @ptrCast(bytes[0..8]), .big);
+    return std.fmt.allocPrint(allocator, "{X}/{X}", .{ value >> 32, value & 0xffff_ffff });
+}
+
+fn formatPostgresTidBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len != 6) return Error.QueryFailed;
+    const block = std.mem.readInt(u32, @ptrCast(bytes[0..4]), .big);
+    const offset = std.mem.readInt(u16, @ptrCast(bytes[4..6]), .big);
+    return std.fmt.allocPrint(allocator, "({},{})", .{ block, offset });
+}
+
+fn formatPostgresOidLikeBytes(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+    if (bytes.len != 4) return Error.QueryFailed;
+    const value = std.mem.readInt(u32, @ptrCast(bytes[0..4]), .big);
+    return std.fmt.allocPrint(allocator, "{}", .{value});
+}
+
+fn isPostgresOidLikeType(typname: []const u8) bool {
+    return std.mem.eql(u8, typname, "oid") or
+        std.mem.eql(u8, typname, "regclass") or
+        std.mem.eql(u8, typname, "regcollation") or
+        std.mem.eql(u8, typname, "regconfig") or
+        std.mem.eql(u8, typname, "regdictionary") or
+        std.mem.eql(u8, typname, "regnamespace") or
+        std.mem.eql(u8, typname, "regoper") or
+        std.mem.eql(u8, typname, "regoperator") or
+        std.mem.eql(u8, typname, "regproc") or
+        std.mem.eql(u8, typname, "regprocedure") or
+        std.mem.eql(u8, typname, "regrole") or
+        std.mem.eql(u8, typname, "regtype");
+}
+
+fn isUnsupportedPostgresSemanticType(typname: []const u8) bool {
+    return std.mem.eql(u8, typname, "xml") or
+        std.mem.eql(u8, typname, "inet") or
+        std.mem.eql(u8, typname, "cidr") or
+        std.mem.eql(u8, typname, "macaddr") or
+        std.mem.eql(u8, typname, "macaddr8") or
+        std.mem.eql(u8, typname, "tsvector") or
+        std.mem.eql(u8, typname, "tsquery") or
+        std.mem.eql(u8, typname, "point") or
+        std.mem.eql(u8, typname, "box") or
+        std.mem.eql(u8, typname, "pg_lsn") or
+        std.mem.eql(u8, typname, "tid");
+}
+
+fn rawTypeFromSchema(schema: *ArrowSchema) ?[]const u8 {
+    return postgresTypeName(schema.metadata);
+}
+
 fn postgresTypeName(metadata: ?[*:0]const u8) ?[]const u8 {
     return arrowMetadataValue(metadata, postgres_typname_key);
 }
@@ -1694,10 +2146,10 @@ fn mapArrowSchemaToColumnType(schema: *ArrowSchema) types.ColumnType {
         if (std.mem.eql(u8, typname, "time") or std.mem.eql(u8, typname, "timetz")) return .time;
         if (std.mem.eql(u8, typname, "interval")) return .interval;
         if (std.mem.eql(u8, typname, "uuid")) return .uuid;
-        if (std.mem.eql(u8, typname, "xml")) return .xml;
-        if (std.mem.eql(u8, typname, "inet") or std.mem.eql(u8, typname, "cidr") or std.mem.eql(u8, typname, "macaddr") or std.mem.eql(u8, typname, "macaddr8")) return .text;
+        if (isUnsupportedPostgresSemanticType(typname)) return .unknown;
         if (std.mem.eql(u8, typname, "json") or std.mem.eql(u8, typname, "jsonb") or std.mem.eql(u8, typname, "jsonpath")) return .json;
         if (typname.len > 0 and (typname[0] == '_' or std.mem.endsWith(u8, typname, "[]"))) return .array;
+        if (isPostgresOidLikeType(typname)) return mapArrowFormatToColumnType(if (schema.format) |fmt| std.mem.span(fmt) else "");
     }
 
     return mapArrowFormatToColumnType(if (schema.format) |fmt| std.mem.span(fmt) else "");
@@ -1738,14 +2190,24 @@ fn mapArrowFormatToColumnType(format: []const u8) types.ColumnType {
             'd' => .date,
             't' => .time,
             's' => .timestamp,
-            'D', 'i' => .interval,
+            'D' => .duration,
+            'i' => .interval,
             else => .unknown,
         };
     }
     return switch (format[0]) {
         'b' => .boolean,
-        'c', 'C', 's', 'S', 'i', 'I', 'l', 'L' => .int64,
-        'e', 'f', 'g' => .float64,
+        'c' => .int8,
+        'C' => .uint8,
+        's' => .int16,
+        'S' => .uint16,
+        'i' => .int32,
+        'I' => .uint32,
+        'l' => .int64,
+        'L' => .uint64,
+        'e' => .float16,
+        'f' => .float32,
+        'g' => .float64,
         'u', 'U' => .text,
         'z', 'Z', 'w' => .binary,
         'd' => .decimal,
@@ -1774,6 +2236,7 @@ test "adbc backend normalizes dictionary encoded utf8 columns" {
 
     try std.testing.expectEqual(@as(usize, 1), columns.len);
     try std.testing.expectEqualStrings("status", columns[0].name);
+    try std.testing.expect(columns[0].raw_type == null);
     try std.testing.expectEqual(types.ColumnType.text, columns[0].column_type);
 }
 
@@ -1859,13 +2322,24 @@ test "adbc backend recognizes arrow extension and view logical types" {
     try std.testing.expectEqual(types.ColumnType.uuid, mapArrowSchemaToColumnType(&uuid_schema));
     try std.testing.expectEqual(types.ColumnType.text, mapArrowFormatToColumnType("vu"));
     try std.testing.expectEqual(types.ColumnType.binary, mapArrowFormatToColumnType("vz"));
+    try std.testing.expectEqual(types.ColumnType.int8, mapArrowFormatToColumnType("c"));
+    try std.testing.expectEqual(types.ColumnType.uint8, mapArrowFormatToColumnType("C"));
+    try std.testing.expectEqual(types.ColumnType.int16, mapArrowFormatToColumnType("s"));
+    try std.testing.expectEqual(types.ColumnType.uint16, mapArrowFormatToColumnType("S"));
+    try std.testing.expectEqual(types.ColumnType.int32, mapArrowFormatToColumnType("i"));
+    try std.testing.expectEqual(types.ColumnType.uint32, mapArrowFormatToColumnType("I"));
+    try std.testing.expectEqual(types.ColumnType.int64, mapArrowFormatToColumnType("l"));
+    try std.testing.expectEqual(types.ColumnType.uint64, mapArrowFormatToColumnType("L"));
+    try std.testing.expectEqual(types.ColumnType.float16, mapArrowFormatToColumnType("e"));
+    try std.testing.expectEqual(types.ColumnType.float32, mapArrowFormatToColumnType("f"));
+    try std.testing.expectEqual(types.ColumnType.float64, mapArrowFormatToColumnType("g"));
     try std.testing.expectEqual(types.ColumnType.date, mapArrowFormatToColumnType("tdD"));
     try std.testing.expectEqual(types.ColumnType.time, mapArrowFormatToColumnType("ttu"));
     try std.testing.expectEqual(types.ColumnType.interval, mapArrowFormatToColumnType("tin"));
+    try std.testing.expectEqual(types.ColumnType.duration, mapArrowFormatToColumnType("tDu"));
     try std.testing.expectEqual(types.ColumnType.array, mapArrowFormatToColumnType("+l"));
     try std.testing.expectEqual(types.ColumnType.map, mapArrowFormatToColumnType("+m"));
     try std.testing.expectEqual(types.ColumnType.struct_, mapArrowFormatToColumnType("+s"));
-    try std.testing.expectEqual(types.ColumnType.float64, mapArrowFormatToColumnType("e"));
 }
 
 test "adbc backend recognizes PostgreSQL typname metadata overrides" {
@@ -1876,6 +2350,7 @@ test "adbc backend recognizes PostgreSQL typname metadata overrides" {
         .metadata = uuid_metadata.ptr,
     };
     try std.testing.expectEqual(types.ColumnType.uuid, mapArrowSchemaToColumnType(&uuid_schema));
+    try std.testing.expectEqualStrings("uuid", rawTypeFromSchema(&uuid_schema).?);
 
     const inet_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "inet");
     defer std.testing.allocator.free(inet_metadata);
@@ -1883,7 +2358,39 @@ test "adbc backend recognizes PostgreSQL typname metadata overrides" {
         .format = "z",
         .metadata = inet_metadata.ptr,
     };
-    try std.testing.expectEqual(types.ColumnType.text, mapArrowSchemaToColumnType(&inet_schema));
+    try std.testing.expectEqual(types.ColumnType.unknown, mapArrowSchemaToColumnType(&inet_schema));
+
+    const regtype_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "regtype");
+    defer std.testing.allocator.free(regtype_metadata);
+    var regtype_schema = ArrowSchema{
+        .format = "i",
+        .metadata = regtype_metadata.ptr,
+    };
+    try std.testing.expectEqual(types.ColumnType.int32, mapArrowSchemaToColumnType(&regtype_schema));
+
+    const lsn_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "pg_lsn");
+    defer std.testing.allocator.free(lsn_metadata);
+    var lsn_schema = ArrowSchema{
+        .format = "w:8",
+        .metadata = lsn_metadata.ptr,
+    };
+    try std.testing.expectEqual(types.ColumnType.unknown, mapArrowSchemaToColumnType(&lsn_schema));
+
+    const tsvector_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "tsvector");
+    defer std.testing.allocator.free(tsvector_metadata);
+    var tsvector_schema = ArrowSchema{
+        .format = "z",
+        .metadata = tsvector_metadata.ptr,
+    };
+    try std.testing.expectEqual(types.ColumnType.unknown, mapArrowSchemaToColumnType(&tsvector_schema));
+
+    const point_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "point");
+    defer std.testing.allocator.free(point_metadata);
+    var point_schema = ArrowSchema{
+        .format = "w:16",
+        .metadata = point_metadata.ptr,
+    };
+    try std.testing.expectEqual(types.ColumnType.unknown, mapArrowSchemaToColumnType(&point_schema));
 
     const array_metadata = try buildSingleArrowMetadata(std.testing.allocator, postgres_typname_key, "_int4");
     defer std.testing.allocator.free(array_metadata);
@@ -1894,9 +2401,64 @@ test "adbc backend recognizes PostgreSQL typname metadata overrides" {
     try std.testing.expectEqual(types.ColumnType.array, mapArrowSchemaToColumnType(&array_schema));
 }
 
+test "adbc backend formats PostgreSQL opaque system types" {
+    const oid_text = try formatPostgresOidLikeBytes(std.testing.allocator, &.{ 0x00, 0x00, 0x00, 0x17 });
+    defer std.testing.allocator.free(oid_text);
+    try std.testing.expectEqualStrings("23", oid_text);
+
+    const lsn_text = try formatPostgresLsnBytes(std.testing.allocator, &.{ 0x00, 0x00, 0x00, 0x00, 0x01, 0x6b, 0x6c, 0x50 });
+    defer std.testing.allocator.free(lsn_text);
+    try std.testing.expectEqualStrings("0/16B6C50", lsn_text);
+
+    const tid_text = try formatPostgresTidBytes(std.testing.allocator, &.{ 0x00, 0x00, 0x00, 0x01, 0x00, 0x02 });
+    defer std.testing.allocator.free(tid_text);
+    try std.testing.expectEqualStrings("(1,2)", tid_text);
+}
+
+test "adbc backend formats PostgreSQL text search and geometry types" {
+    const tsvector_text = try formatPostgresTsVectorBytes(std.testing.allocator, &.{
+        0x00, 0x00, 0x00, 0x02,
+        'h',  'e',  'l',  'l',
+        'o',  0x00, 0x00, 0x01,
+        0x00, 0x01, 'w',  'o',
+        'r',  'l',  'd',  0x00,
+        0x00, 0x01, 0x00, 0x02,
+    });
+    defer std.testing.allocator.free(tsvector_text);
+    try std.testing.expectEqualStrings("'hello':1 'world':2", tsvector_text);
+
+    const tsquery_text = try formatPostgresTsQueryBytes(std.testing.allocator, &.{
+        0x00, 0x00, 0x00, 0x03,
+        0x02, 0x02, 0x01, 0x00,
+        0x00, 'w',  'o',  'r',
+        'l',  'd',  0x00, 0x01,
+        0x00, 0x00, 'h',  'e',
+        'l',  'l',  'o',  0x00,
+    });
+    defer std.testing.allocator.free(tsquery_text);
+    try std.testing.expectEqualStrings("'hello' & 'world'", tsquery_text);
+
+    const point_text = try formatPostgresPointBytes(std.testing.allocator, &.{
+        0x3f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    });
+    defer std.testing.allocator.free(point_text);
+    try std.testing.expectEqualStrings("(1,2)", point_text);
+
+    const box_text = try formatPostgresBoxBytes(std.testing.allocator, &.{
+        0x3f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x3f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    });
+    defer std.testing.allocator.free(box_text);
+    try std.testing.expectEqualStrings("(1,1),(0,0)", box_text);
+}
+
 fn freeColumns(allocator: std.mem.Allocator, columns: []const types.ColumnMetadata) void {
     for (columns) |column| {
         allocator.free(column.name);
+        if (column.raw_type) |raw_type| allocator.free(raw_type);
     }
     allocator.free(columns);
 }

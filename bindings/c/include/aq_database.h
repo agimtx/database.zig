@@ -45,15 +45,26 @@ enum aq_column_type {
     AQ_COLUMN_TIME = 10,
     AQ_COLUMN_INTERVAL = 11,
     AQ_COLUMN_UUID = 12,
-    AQ_COLUMN_XML = 13,
-    AQ_COLUMN_ARRAY = 14,
-    AQ_COLUMN_MAP = 15,
-    AQ_COLUMN_STRUCT = 16
+    AQ_COLUMN_ARRAY = 13,
+    AQ_COLUMN_MAP = 14,
+    AQ_COLUMN_STRUCT = 15,
+    AQ_COLUMN_INT8 = 16,
+    AQ_COLUMN_UINT8 = 17,
+    AQ_COLUMN_INT16 = 18,
+    AQ_COLUMN_UINT16 = 19,
+    AQ_COLUMN_INT32 = 20,
+    AQ_COLUMN_UINT32 = 21,
+    AQ_COLUMN_UINT64 = 22,
+    AQ_COLUMN_FLOAT16 = 23,
+    AQ_COLUMN_FLOAT32 = 24,
+    AQ_COLUMN_DURATION = 25
 };
 
 struct aq_column_metadata {
     const uint8_t *name_ptr;
     uintptr_t name_len;
+    const uint8_t *raw_type_ptr;
+    uintptr_t raw_type_len;
     int32_t column_type;
     uint8_t nullable;
 };

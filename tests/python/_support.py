@@ -238,6 +238,8 @@ def assert_column_metadata(columns: list[object], expected_columns: list[dict[st
         if not isinstance(expected_types, list):
             expected_types = [expected_types]
         assert actual.column_type in expected_types
+        if "raw_type" in expected:
+            assert actual.raw_type == expected["raw_type"]
 
 
 async def assert_type_coverage(

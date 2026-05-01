@@ -8,7 +8,7 @@ import os
 import platform
 import uuid
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
@@ -49,16 +49,27 @@ class ColumnType(IntEnum):
     TIME = 10
     INTERVAL = 11
     UUID = 12
-    XML = 13
-    ARRAY = 14
-    MAP = 15
-    STRUCT = 16
+    ARRAY = 13
+    MAP = 14
+    STRUCT = 15
+    INT8 = 16
+    UINT8 = 17
+    INT16 = 18
+    UINT16 = 19
+    INT32 = 20
+    UINT32 = 21
+    UINT64 = 22
+    FLOAT16 = 23
+    FLOAT32 = 24
+    DURATION = 25
 
 
 class _CColumnMetadata(ctypes.Structure):
     _fields_ = [
         ("name_ptr", ctypes.c_void_p),
         ("name_len", ctypes.c_size_t),
+        ("raw_type_ptr", ctypes.c_void_p),
+        ("raw_type_len", ctypes.c_size_t),
         ("column_type", ctypes.c_int32),
         ("nullable", ctypes.c_uint8),
     ]
@@ -91,6 +102,7 @@ class _CErrorMessage(ctypes.Structure):
 @dataclass(frozen=True)
 class ColumnMetadata:
     name: str
+    raw_type: str | None
     column_type: ColumnType
     nullable: bool
 
@@ -111,10 +123,10 @@ def _decode_result_value(raw_value: str | None, column_type: ColumnType) -> Resu
                 return False
             return raw_value
 
-        if column_type == ColumnType.INT64:
+        if column_type in (ColumnType.INT8, ColumnType.UINT8, ColumnType.INT16, ColumnType.UINT16, ColumnType.INT32, ColumnType.UINT32, ColumnType.INT64, ColumnType.UINT64):
             return int(raw_value)
 
-        if column_type == ColumnType.FLOAT64:
+        if column_type in (ColumnType.FLOAT16, ColumnType.FLOAT32, ColumnType.FLOAT64):
             return float(raw_value)
 
         if column_type == ColumnType.BINARY:
@@ -137,7 +149,7 @@ def _decode_result_value(raw_value: str | None, column_type: ColumnType) -> Resu
 
         if column_type == ColumnType.UUID:
             return uuid.UUID(raw_value)
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, json.JSONDecodeError, InvalidOperation):
         return raw_value
 
     return raw_value
@@ -514,6 +526,7 @@ class ConnectionManager:
         self._raise_on_status(func(self._manager, handle_id, index, ctypes.byref(raw_metadata)), label)
         return ColumnMetadata(
             name=ctypes.string_at(raw_metadata.name_ptr, raw_metadata.name_len).decode("utf-8"),
+            raw_type=(ctypes.string_at(raw_metadata.raw_type_ptr, raw_metadata.raw_type_len).decode("utf-8") if raw_metadata.raw_type_ptr and raw_metadata.raw_type_len > 0 else None),
             column_type=ColumnType(raw_metadata.column_type),
             nullable=bool(raw_metadata.nullable),
         )

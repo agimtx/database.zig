@@ -33,10 +33,19 @@ const COLUMN_TYPES = {
   TIME: 10,
   INTERVAL: 11,
   UUID: 12,
-  XML: 13,
-  ARRAY: 14,
-  MAP: 15,
-  STRUCT: 16,
+  ARRAY: 13,
+  MAP: 14,
+  STRUCT: 15,
+  INT8: 16,
+  UINT8: 17,
+  INT16: 18,
+  UINT16: 19,
+  INT32: 20,
+  UINT32: 21,
+  UINT64: 22,
+  FLOAT16: 23,
+  FLOAT32: 24,
+  DURATION: 25,
 };
 
 const POINTER_SIZE = ref.sizeof.pointer;
@@ -46,7 +55,7 @@ function alignStructSize(size) {
   return remainder === 0 ? size : size + (POINTER_SIZE - remainder);
 }
 
-const COLUMN_METADATA_SIZE = alignStructSize(POINTER_SIZE + SIZE_T_SIZE + 4 + 1);
+const COLUMN_METADATA_SIZE = alignStructSize((POINTER_SIZE * 2) + (SIZE_T_SIZE * 2) + 4 + 1);
 const RESULT_CELL_SIZE = alignStructSize(POINTER_SIZE + SIZE_T_SIZE + 1);
 const OPERATION_RESULT_SIZE = 16;
 
@@ -122,8 +131,18 @@ function convertResultValue(rawValue, columnType) {
         }
         return rawValue;
       }
+      case COLUMN_TYPES.INT8:
+      case COLUMN_TYPES.UINT8:
+      case COLUMN_TYPES.INT16:
+      case COLUMN_TYPES.UINT16:
+      case COLUMN_TYPES.INT32:
+      case COLUMN_TYPES.UINT32:
+        return Number(rawValue);
       case COLUMN_TYPES.INT64:
+      case COLUMN_TYPES.UINT64:
         return BigInt(rawValue);
+      case COLUMN_TYPES.FLOAT16:
+      case COLUMN_TYPES.FLOAT32:
       case COLUMN_TYPES.FLOAT64:
         return Number(rawValue);
       case COLUMN_TYPES.BINARY:
@@ -158,10 +177,16 @@ function readColumnMetadata(buffer) {
     ? Number(buffer.readBigUInt64LE(POINTER_SIZE))
     : buffer.readUInt32LE(POINTER_SIZE);
   const nameBuffer = ref.readPointer(buffer, 0, nameLength);
-  const typeOffset = POINTER_SIZE + SIZE_T_SIZE;
+  const rawTypeOffset = POINTER_SIZE + SIZE_T_SIZE;
+  const rawTypeLengthOffset = rawTypeOffset + POINTER_SIZE;
+  const rawTypeLength = SIZE_T_SIZE === 8
+    ? Number(buffer.readBigUInt64LE(rawTypeLengthOffset))
+    : buffer.readUInt32LE(rawTypeLengthOffset);
+  const typeOffset = rawTypeLengthOffset + SIZE_T_SIZE;
 
   return {
     name: nameBuffer.toString("utf8"),
+    rawType: rawTypeLength > 0 ? ref.readPointer(buffer, rawTypeOffset, rawTypeLength).toString("utf8") : null,
     columnType: buffer.readInt32LE(typeOffset),
     nullable: buffer.readUInt8(typeOffset + 4) === 1,
   };

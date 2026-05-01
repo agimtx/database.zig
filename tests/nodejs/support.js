@@ -227,6 +227,9 @@ function assertColumnMetadata(columns, expectedColumns) {
     assert.equal(actual.name, expected.name, `column ${index} name mismatch`);
     const expectedTypes = Array.isArray(expected.type) ? expected.type : [expected.type];
     assert.ok(expectedTypes.includes(actual.columnType), `column ${actual.name} type mismatch: got ${actual.columnType}, expected one of ${expectedTypes.join(", ")}`);
+    if (Object.hasOwn(expected, "rawType")) {
+      assert.equal(actual.rawType, expected.rawType, `column ${actual.name} rawType mismatch`);
+    }
   }
 }
 

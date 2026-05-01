@@ -25,6 +25,16 @@ POSTGRES_ADDITIONAL_TYPES_SQL = (
     "timestamptz '2024-01-02 03:04:05+02' as timestamptz_value"
 )
 
+POSTGRES_RANGE_AND_SYSTEM_TYPES_SQL = (
+    "select "
+    "int4range(1,5) as range_value, "
+    "int4multirange(int4range(1,5), int4range(7,9)) as multirange_value, "
+    "42::oid as oid_value, "
+    "'pg_type'::regclass as regclass_value, "
+    "'(1,2)'::tid as tid_value, "
+    "'0/16B6C50'::pg_lsn as lsn_value"
+)
+
 
 def build_postgres_type_coverage_case(table_name: str) -> dict[str, object]:
     return {
@@ -71,10 +81,10 @@ def build_postgres_type_coverage_case(table_name: str) -> dict[str, object]:
             {"name": "date_value", "column_type": ColumnType.DATE},
             {"name": "time_value", "column_type": ColumnType.TIME},
             {"name": "interval_value", "column_type": ColumnType.INTERVAL},
-            {"name": "uuid_value", "column_type": ColumnType.UUID},
-            {"name": "xml_value", "column_type": ColumnType.XML},
+            {"name": "uuid_value", "column_type": ColumnType.UUID, "raw_type": "uuid"},
+            {"name": "xml_value", "column_type": ColumnType.UNKNOWN, "raw_type": "xml"},
             {"name": "array_value", "column_type": ColumnType.ARRAY},
-            {"name": "inet_value", "column_type": ColumnType.TEXT},
+            {"name": "inet_value", "column_type": ColumnType.UNKNOWN, "raw_type": "inet"},
             {"name": "timestamp_value", "column_type": ColumnType.TIMESTAMP},
             {"name": "json_value", "column_type": [ColumnType.JSON, ColumnType.TEXT]},
         ],
@@ -141,14 +151,14 @@ async def assert_postgres_additional_type_coverage(connection: object) -> None:
             {"name": "money_value", "column_type": ColumnType.INT64},
             {"name": "bit_value", "column_type": ColumnType.BINARY},
             {"name": "varbit_value", "column_type": ColumnType.BINARY},
-            {"name": "cidr_value", "column_type": ColumnType.TEXT},
-            {"name": "macaddr_value", "column_type": ColumnType.TEXT},
-            {"name": "macaddr8_value", "column_type": ColumnType.TEXT},
-            {"name": "tsv_value", "column_type": ColumnType.BINARY},
-            {"name": "tsq_value", "column_type": ColumnType.BINARY},
-            {"name": "point_value", "column_type": ColumnType.BINARY},
-            {"name": "box_value", "column_type": ColumnType.BINARY},
-            {"name": "regtype_value", "column_type": ColumnType.BINARY},
+            {"name": "cidr_value", "column_type": ColumnType.UNKNOWN, "raw_type": "cidr"},
+            {"name": "macaddr_value", "column_type": ColumnType.UNKNOWN, "raw_type": "macaddr"},
+            {"name": "macaddr8_value", "column_type": ColumnType.UNKNOWN, "raw_type": "macaddr8"},
+            {"name": "tsv_value", "column_type": ColumnType.UNKNOWN, "raw_type": "tsvector"},
+            {"name": "tsq_value", "column_type": ColumnType.UNKNOWN, "raw_type": "tsquery"},
+            {"name": "point_value", "column_type": ColumnType.UNKNOWN, "raw_type": "point"},
+            {"name": "box_value", "column_type": ColumnType.UNKNOWN, "raw_type": "box"},
+            {"name": "regtype_value", "column_type": ColumnType.BINARY, "raw_type": "regtype"},
             {"name": "timetz_value", "column_type": ColumnType.TIME},
             {"name": "timestamptz_value", "column_type": ColumnType.TIMESTAMP},
         ])
@@ -156,10 +166,45 @@ async def assert_postgres_additional_type_coverage(connection: object) -> None:
         assert result_set.value(0, 3) == "10.0.0.0/24"
         assert result_set.value(0, 4) == "08:00:2b:01:02:03"
         assert result_set.value(0, 5) == "08:00:2b:01:02:03:04:05"
+        assert result_set.value(0, 6) == "'hello':1 'world':2"
+        assert result_set.value(0, 7) == "'hello' & 'world'"
+        assert result_set.value(0, 8) == "(1,2)"
+        assert result_set.value(0, 9) == "(1,1),(0,0)"
+        assert result_set.value(0, 10) == b"#"
         assert result_set.value(0, 12) == dt.datetime(2024, 1, 2, 1, 4, 5)
 
-        for index, label in ((1, "bit_value"), (2, "varbit_value"), (6, "tsv_value"), (7, "tsq_value"), (8, "point_value"), (9, "box_value"), (10, "regtype_value"), (11, "timetz_value")):
+        for index, label in ((1, "bit_value"), (2, "varbit_value"), (11, "timetz_value")):
             assert_hex_value(result_set.value(0, index), label)
+    finally:
+        await result_set.close_async()
+
+    result_set = await connection.execute_async(POSTGRES_RANGE_AND_SYSTEM_TYPES_SQL)
+    try:
+        assert_column_metadata(result_set.columns, [
+            {"name": "range_value", "column_type": ColumnType.BINARY},
+            {"name": "multirange_value", "column_type": ColumnType.BINARY},
+            {"name": "oid_value", "column_type": ColumnType.INT32},
+            {"name": "regclass_value", "column_type": ColumnType.BINARY, "raw_type": "regclass"},
+            {"name": "tid_value", "column_type": ColumnType.UNKNOWN, "raw_type": "tid"},
+            {"name": "lsn_value", "column_type": ColumnType.UNKNOWN, "raw_type": "pg_lsn"},
+        ])
+        assert result_set.value(0, 0) == b"\x02\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x04\x00\x00\x00\x05"
+        assert result_set.value(0, 1) == (
+            b"\x00\x00\x00\x02\x00\x00\x00\x11\x02\x00\x00\x00\x04\x00\x00\x00"
+            b"\x01\x00\x00\x00\x04\x00\x00\x00\x05\x00\x00\x00\x11\x02\x00\x00"
+            b"\x00\x04\x00\x00\x00\x07\x00\x00\x00\x04\x00\x00\x00\t"
+        )
+        assert result_set.value(0, 2) == 42
+        assert result_set.value(0, 3) == b"\x12G"
+        assert result_set.value(0, 4) == "(1,2)"
+        assert result_set.value(0, 5) == "0/16B6C50"
+    finally:
+        await result_set.close_async()
+
+    result_set = await connection.execute_async("select null::anyelement as pseudo_value")
+    try:
+        assert_column_metadata(result_set.columns, [{"name": "pseudo_value", "column_type": ColumnType.TEXT}])
+        assert result_set.value(0, 0) is None
     finally:
         await result_set.close_async()
 

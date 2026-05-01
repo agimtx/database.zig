@@ -13,7 +13,7 @@ ResultSet = _binding_module.ResultSet
 
 class _FakeManager:
     def __init__(self, column_type: ColumnType, raw_value: str | None) -> None:
-        self._columns = [ColumnMetadata(name="value", column_type=column_type, nullable=True)]
+        self._columns = [ColumnMetadata(name="value", raw_type=None, column_type=column_type, nullable=True)]
         self._raw_value = raw_value
 
     def _result_set_columns(self, result_set_id: int) -> list[ColumnMetadata]:
@@ -37,8 +37,17 @@ class ResultValueConversionTests(unittest.TestCase):
     def test_int64_values_become_int(self) -> None:
         self.assertEqual(self._value(ColumnType.INT64, "42"), 42)
 
+    def test_int32_values_become_int(self) -> None:
+        self.assertEqual(self._value(ColumnType.INT32, "42"), 42)
+
+    def test_uint64_values_become_int(self) -> None:
+        self.assertEqual(self._value(ColumnType.UINT64, "42"), 42)
+
     def test_float64_values_become_float(self) -> None:
         self.assertEqual(self._value(ColumnType.FLOAT64, "3.5"), 3.5)
+
+    def test_float32_values_become_float(self) -> None:
+        self.assertEqual(self._value(ColumnType.FLOAT32, "3.5"), 3.5)
 
     def test_binary_values_become_bytes(self) -> None:
         self.assertEqual(self._value(ColumnType.BINARY, "0102ff"), b"\x01\x02\xff")

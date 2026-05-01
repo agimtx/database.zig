@@ -44,7 +44,7 @@ function buildStarRocksTypeCoverageCase(tableName) {
 			`select id, bool_value, int_value, float_value, text_value, fixed_text_value, decimal_value, date_value, timestamp_value, largeint_value, json_value from ${tableName} order by id`,
 		expectedColumns: [
 			{ name: "id", type: bindingModule.COLUMN_TYPES.INT64 },
-			{ name: "bool_value", type: [bindingModule.COLUMN_TYPES.BOOLEAN, bindingModule.COLUMN_TYPES.INT64] },
+			{ name: "bool_value", type: [bindingModule.COLUMN_TYPES.BOOLEAN, bindingModule.COLUMN_TYPES.INT8] },
 			{ name: "int_value", type: bindingModule.COLUMN_TYPES.INT64 },
 			{ name: "float_value", type: bindingModule.COLUMN_TYPES.FLOAT64 },
 			{ name: "text_value", type: bindingModule.COLUMN_TYPES.TEXT },
@@ -64,13 +64,13 @@ function assertStarRocksTypeCoverageValues(resultSet) {
 	if (columns[1].columnType === bindingModule.COLUMN_TYPES.BOOLEAN) {
 		assertBooleanValue(resultSet.value(0, 1));
 	} else {
-		assert.equal(resultSet.value(0, 1), 1n);
+		assert.equal(resultSet.value(0, 1), 1);
 	}
 	assert.equal(resultSet.value(0, 2), 42n);
 	assert.equal(resultSet.value(0, 3), 3.5);
 	assert.equal(resultSet.value(0, 4), "alpha");
 	assert.equal(resultSet.value(0, 5), "omega");
-	assertNonEmptyValue(resultSet.value(0, 6), "decimal_value");
+	assert.equal(resultSet.value(0, 6), "123.45");
 	assert.equal(resultSet.value(0, 7), "2024-01-02");
 	assert.match(resultSet.value(0, 8), /^2024-01-02T03:04:05(?:\.\d+)?$/);
 	assert.equal(resultSet.value(0, 9), "123456789012345678901234567890");
@@ -93,23 +93,30 @@ const STARROCKS_ADDITIONAL_TYPES_SQL =
 	"map('a',1,'b',2) as map_value, " +
 	"row(1, 'alpha') as struct_value";
 
+const STARROCKS_SKETCH_TYPES_SQL =
+	"select " +
+	"to_bitmap(42) as bitmap_value, " +
+	"hll_hash('alpha') as hll_value, " +
+	"percentile_hash(42) as percentile_value";
+
 async function assertStarRocksAdditionalTypeCoverage(connection) {
 	const resultSet = await connection.execute(STARROCKS_ADDITIONAL_TYPES_SQL);
 	try {
 		assertColumnMetadata(resultSet.columns, [
-			{ name: "tiny_value", type: bindingModule.COLUMN_TYPES.INT64 },
-			{ name: "small_value", type: bindingModule.COLUMN_TYPES.INT64 },
-			{ name: "int_value", type: bindingModule.COLUMN_TYPES.INT64 },
+			{ name: "tiny_value", type: bindingModule.COLUMN_TYPES.INT8 },
+			{ name: "small_value", type: bindingModule.COLUMN_TYPES.INT16 },
+			{ name: "int_value", type: bindingModule.COLUMN_TYPES.INT32 },
 			{ name: "big_value", type: bindingModule.COLUMN_TYPES.INT64 },
-			{ name: "float_value", type: bindingModule.COLUMN_TYPES.FLOAT64 },
+			{ name: "float_value", type: bindingModule.COLUMN_TYPES.FLOAT32 },
 			{ name: "double_value", type: bindingModule.COLUMN_TYPES.FLOAT64 },
 			{ name: "array_value", type: bindingModule.COLUMN_TYPES.TEXT },
 			{ name: "map_value", type: bindingModule.COLUMN_TYPES.TEXT },
 			{ name: "struct_value", type: bindingModule.COLUMN_TYPES.TEXT },
 		]);
-		assert.equal(resultSet.value(0, 0), 1n);
-		assert.equal(resultSet.value(0, 1), 2n);
-		assert.equal(resultSet.value(0, 2), 3n);
+		assert.ok(resultSet.columns.every((column) => column.rawType === null));
+		assert.equal(resultSet.value(0, 0), 1);
+		assert.equal(resultSet.value(0, 1), 2);
+		assert.equal(resultSet.value(0, 2), 3);
 		assert.equal(resultSet.value(0, 3), 4n);
 		assert.equal(resultSet.value(0, 4), 5.5);
 		assert.equal(resultSet.value(0, 5), 6.5);
@@ -118,6 +125,20 @@ async function assertStarRocksAdditionalTypeCoverage(connection) {
 		assert.equal(resultSet.value(0, 8), '{"col1":1,"col2":"alpha"}');
 	} finally {
 		await resultSet.close();
+	}
+
+	const sketchResult = await connection.execute(STARROCKS_SKETCH_TYPES_SQL);
+	try {
+		assertColumnMetadata(sketchResult.columns, [
+			{ name: "bitmap_value", type: bindingModule.COLUMN_TYPES.TEXT },
+			{ name: "hll_value", type: bindingModule.COLUMN_TYPES.TEXT },
+			{ name: "percentile_value", type: bindingModule.COLUMN_TYPES.BINARY },
+		]);
+		assert.equal(sketchResult.value(0, 0), null);
+		assert.equal(sketchResult.value(0, 1), null);
+		assert.equal(sketchResult.value(0, 2), null);
+	} finally {
+		await sketchResult.close();
 	}
 }
 
