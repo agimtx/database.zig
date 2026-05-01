@@ -1,6 +1,6 @@
 # Integration Tests
 
-This directory contains binding-level integration tests for the Python and Node.js wrappers.
+This directory contains binding-level integration tests for the Python, Node.js, and Rust wrappers.
 
 ## Configuration
 
@@ -31,4 +31,13 @@ Run from the repository root:
 ```bash
 npm --prefix bindings/nodejs run typecheck:tests
 npm --prefix bindings/nodejs run test:node
+```
+
+## Rust
+
+Rust test sources live under `tests/rust/`. Build the shared library first so the Rust crate can load `zig-out/lib/libaq_database.*`:
+
+```bash
+zig build shared
+cargo test --manifest-path bindings/rust/Cargo.toml
 ```

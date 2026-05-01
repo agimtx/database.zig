@@ -1,6 +1,6 @@
 # database.zig
 
-database.zig is a database connection management library scaffold that uses Zig as the control plane, Apache Arrow ADBC as the database access layer, and a stable C ABI for C, Python, and Node.js consumers. Zig owns lifecycle, registration, and error mapping while the target database is selected through the ADBC driver manager and connection configuration.
+database.zig is a database connection management library scaffold that uses Zig as the control plane, Apache Arrow ADBC as the database access layer, and a stable C ABI for C, Python, Node.js, and Rust consumers. Zig owns lifecycle, registration, and error mapping while the target database is selected through the ADBC driver manager and connection configuration.
 
 ## Goals
 
@@ -35,6 +35,7 @@ database.zig is a database connection management library scaffold that uses Zig 
 - Zig now defines a unified external model for connections, SQL execution, cursors, result sets, and column metadata.
 - Python includes a thin ctypes-based binding scaffold.
 - Node.js includes a thin ffi-napi-based binding scaffold for the public C ABI.
+- Rust includes a thin dynamic-loading binding crate for the public C ABI.
 - The current backend surface is a single built-in ADBC driver path selected through the public ABI.
 
 ## ADBC Connection Strings

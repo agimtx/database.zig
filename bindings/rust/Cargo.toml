@@ -1,0 +1,18 @@
+[package]
+name = "aq_database"
+version = "0.1.0"
+edition = "2021"
+description = "Thin Rust bindings for the database.zig C ABI"
+license = "MIT"
+
+[lib]
+name = "aq_database"
+path = "src/lib.rs"
+
+[[test]]
+name = "test_value_conversion"
+path = "../../tests/rust/test_value_conversion.rs"
+
+[[test]]
+name = "test_duckdb"
+path = "../../tests/rust/test_duckdb.rs"
