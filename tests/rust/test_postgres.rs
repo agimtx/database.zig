@@ -2,8 +2,9 @@ mod support;
 
 use aq_database::{ColumnType, Value};
 use support::{
-    assert_columns_match, assert_table_qualified_name, execute_non_query, find_row_index, load_target,
-    maybe_skip_configured_section, read_values, ExpectedColumn, unique_identifier,
+    assert_columns_match, assert_namespace_access, assert_table_qualified_name, execute_non_query,
+    find_row_index, load_target, maybe_skip_configured_section, read_values, ExpectedColumn,
+    unique_identifier,
 };
 
 const POSTGRES_DECIMAL_OR_TEXT: &[ColumnType] = &[ColumnType::Decimal, ColumnType::Text];
@@ -101,6 +102,33 @@ fn rust_binding_postgres_lifecycle() {
             let table_row = find_row_index(&tables_result, 2, &Value::Text(table_name.clone()))?;
             assert_table_qualified_name(&tables_result, table_row)?;
             tables_result.close()?;
+
+            let namespace_access = database_connection.inspect_namespace_access(Some(&database_name), Some("public"))?;
+            assert_namespace_access(
+                &namespace_access,
+                true,
+                true,
+                true,
+                aq_database::QualifiedNamePartRole::Schema,
+                &[
+                    (aq_database::QualifiedNamePartRole::Catalog, &database_name),
+                    (aq_database::QualifiedNamePartRole::Schema, "public"),
+                ],
+            );
+
+            let missing_schema = unique_identifier("missing_schema");
+            let missing_access = database_connection.inspect_namespace_access(Some(&database_name), Some(&missing_schema))?;
+            assert_namespace_access(
+                &missing_access,
+                true,
+                true,
+                false,
+                aq_database::QualifiedNamePartRole::Schema,
+                &[
+                    (aq_database::QualifiedNamePartRole::Catalog, &database_name),
+                    (aq_database::QualifiedNamePartRole::Schema, &missing_schema),
+                ],
+            );
 
             database_connection.close()?;
             Ok(())
@@ -353,6 +381,5 @@ fn is_runtime_unavailable(error: &aq_database::Error) -> bool {
     message.contains("Could not load")
         || message.contains("Library not loaded")
         || message.contains("connection refused")
-        || message.contains("timed out")
-        || message.contains("aq_connection_open failed:")
+    || message.contains("timed out")
 }

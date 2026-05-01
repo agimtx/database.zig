@@ -11,6 +11,7 @@ const resultSetPromise: Promise<aqDatabase.ResultSet> = connection.execute("sele
 const cursorPromise: Promise<aqDatabase.Cursor> = connection.cursor("select 1");
 const isHealthy: Promise<boolean> = connection.test();
 const tables: Promise<aqDatabase.ResultSet> = connection.getTables(null, "main");
+const namespaceAccess: Promise<aqDatabase.NamespaceAccess> = connection.inspectNamespaceAccess(null, "main");
 
 const firstColumn: aqDatabase.ColumnMetadata = resultSet.columns[0];
 const cellValue = resultSet.value(0, 0);
@@ -25,6 +26,7 @@ void resultSetPromise;
 void cursorPromise;
 void isHealthy;
 void tables;
+void namespaceAccess;
 void firstColumn;
 void part;
 void qualifiedNameText;

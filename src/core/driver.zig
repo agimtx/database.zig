@@ -74,6 +74,12 @@ pub const GetDatabasesFn = *const fn (
     result_set_id: u64,
 ) anyerror!*ResultSetHandle;
 
+pub const InspectNamespaceAccessFn = *const fn (
+    allocator: std.mem.Allocator,
+    handle: *ConnectionHandle,
+    options: types.NamespaceAccessOptions,
+) anyerror!types.NamespaceAccess;
+
 pub const OpenCursorFn = *const fn (
     allocator: std.mem.Allocator,
     handle: *ConnectionHandle,
@@ -102,6 +108,7 @@ pub const DriverSpec = struct {
     close_result_set: CloseResultSetFn,
     get_tables: GetTablesFn,
     get_databases: GetDatabasesFn,
+    inspect_namespace_access: InspectNamespaceAccessFn,
     open_cursor: OpenCursorFn,
     fetch_cursor_next: FetchCursorNextFn,
     close_cursor: CloseCursorFn,
@@ -249,6 +256,41 @@ pub fn stubGetDatabases(
         .affected_rows = 1,
     };
     return result_set;
+}
+
+pub fn stubInspectNamespaceAccess(
+    _: std.mem.Allocator,
+    _: *ConnectionHandle,
+    options: types.NamespaceAccessOptions,
+) !types.NamespaceAccess {
+    var access = types.NamespaceAccess{
+        .can_get_schema = false,
+        .has_catalog_access = options.catalog == null,
+        .has_namespace_access = options.database == null,
+        .namespace_role = .database,
+    };
+
+    if (options.catalog) |catalog| {
+        if (catalog.len == 0) {
+            access.has_catalog_access = true;
+        } else {
+            access.parts[access.part_count] = .{ .role = .catalog, .value = catalog };
+            access.part_count += 1;
+            access.has_catalog_access = false;
+        }
+    }
+
+    if (options.database) |database| {
+        if (database.len == 0) {
+            access.has_namespace_access = true;
+        } else {
+            access.parts[access.part_count] = .{ .role = .database, .value = database };
+            access.part_count += 1;
+            access.has_namespace_access = std.mem.eql(u8, database, "main");
+        }
+    }
+
+    return access;
 }
 
 pub fn stubOpenCursor(

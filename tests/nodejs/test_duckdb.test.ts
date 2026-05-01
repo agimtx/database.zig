@@ -8,6 +8,7 @@ import {
   assertBooleanValue,
   assertColumnMetadata,
   assertErrorMessage,
+  assertNamespaceAccess,
   assertNonEmptyValue,
   assertTableQualifiedName,
   assertTypeCoverage,
@@ -181,6 +182,25 @@ async function runDuckDbLifecycleTest(): Promise<string | null> {
       } finally {
         await databasesResult.close();
       }
+
+      const namespaceAccess = await connection.inspectNamespaceAccess(null, "main");
+      assertNamespaceAccess(namespaceAccess, {
+        canGetSchema: true,
+        hasCatalogAccess: true,
+        hasNamespaceAccess: true,
+        namespaceRole: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA,
+        parts: [{ role: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA, value: "main" }],
+      });
+
+      const missingNamespace = uniqueIdentifier("missing_schema");
+      const missingAccess = await connection.inspectNamespaceAccess(null, missingNamespace);
+      assertNamespaceAccess(missingAccess, {
+        canGetSchema: true,
+        hasCatalogAccess: true,
+        hasNamespaceAccess: false,
+        namespaceRole: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA,
+        parts: [{ role: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA, value: missingNamespace }],
+      });
     } finally {
       await connection.close();
     }

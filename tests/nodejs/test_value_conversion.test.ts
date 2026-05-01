@@ -7,12 +7,14 @@ type ColumnMetadata = import("../../bindings/nodejs/src/index").ColumnMetadata;
 type ColumnType = import("../../bindings/nodejs/src/index").ColumnType;
 type ConnectionManager = import("../../bindings/nodejs/src/index").ConnectionManager;
 type QualifiedName = import("../../bindings/nodejs/src/index").QualifiedName;
+type NamespaceAccess = import("../../bindings/nodejs/src/index").NamespaceAccess;
 type ResultValue = import("../../bindings/nodejs/src/index").ResultValue;
 
 class FakeManager {
   columns: ColumnMetadata[];
   rawValue: string | null;
   _resultSetTableQualifiedName?: () => QualifiedName;
+  _inspectNamespaceAccess?: () => NamespaceAccess;
 
   constructor(columnType: ColumnType, rawValue: string | null) {
     this.columns = [{ name: "value", columnType, rawType: null, nullable: true }];
@@ -63,6 +65,25 @@ runValueTest("node binding returns typed table qualified names", () => {
       { role: bindingModule.QUALIFIED_NAME_PART_ROLES.OBJECT, value: "records" },
     ],
   );
+});
+
+runValueTest("node binding returns namespace access with typed qualified names", () => {
+  const manager = new FakeManager(bindingModule.COLUMN_TYPES.TEXT, "ignored");
+  manager._inspectNamespaceAccess = () => new bindingModule.NamespaceAccess(
+    true,
+    true,
+    true,
+    bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA,
+    new bindingModule.QualifiedName([
+      new bindingModule.QualifiedNamePart(bindingModule.QUALIFIED_NAME_PART_ROLES.CATALOG, "analytics"),
+      new bindingModule.QualifiedNamePart(bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA, "public"),
+    ], "analytics.public"),
+  );
+
+  const access = manager._inspectNamespaceAccess();
+  assert.ok(access instanceof bindingModule.NamespaceAccess);
+  assert.equal(access.canGetSchema, true);
+  assert.equal(String(access.qualifiedName), "analytics.public");
 });
 
 runValueTest("node binding converts booleans", () => {

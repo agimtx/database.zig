@@ -175,6 +175,15 @@ impl fmt::Display for QualifiedName {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamespaceAccess {
+    pub can_get_schema: bool,
+    pub has_catalog_access: bool,
+    pub has_namespace_access: bool,
+    pub namespace_role: QualifiedNamePartRole,
+    pub qualified_name: QualifiedName,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -293,6 +302,15 @@ struct AqQualifiedName {
 }
 
 #[repr(C)]
+struct AqNamespaceAccess {
+    namespace_role: i32,
+    can_get_schema: u8,
+    has_catalog_access: u8,
+    has_namespace_access: u8,
+    qualified_name: AqQualifiedName,
+}
+
+#[repr(C)]
 struct AqOperationResult {
     state: u8,
     _padding: [u8; 3],
@@ -340,6 +358,7 @@ struct Api {
     aq_connection_get_tables: unsafe extern "C" fn(*mut c_void, u64, *const c_char, *const c_char) -> u64,
     aq_connection_get_databases: unsafe extern "C" fn(*mut c_void, u64) -> u64,
     aq_connection_get_database: unsafe extern "C" fn(*mut c_void, u64) -> u64,
+    aq_connection_inspect_namespace_access: unsafe extern "C" fn(*mut c_void, u64, *const c_char, *const c_char, *mut AqNamespaceAccess) -> i32,
     aq_result_set_close: unsafe extern "C" fn(*mut c_void, u64) -> i32,
     aq_result_set_row_count: unsafe extern "C" fn(*mut c_void, u64, *mut u64) -> i32,
     aq_result_set_affected_rows: unsafe extern "C" fn(*mut c_void, u64, *mut u64) -> i32,
@@ -371,6 +390,7 @@ impl Api {
         let aq_connection_get_tables = unsafe { library.symbol("aq_connection_get_tables")? };
         let aq_connection_get_databases = unsafe { library.symbol("aq_connection_get_databases")? };
         let aq_connection_get_database = unsafe { library.symbol("aq_connection_get_database")? };
+        let aq_connection_inspect_namespace_access = unsafe { library.symbol("aq_connection_inspect_namespace_access")? };
         let aq_result_set_close = unsafe { library.symbol("aq_result_set_close")? };
         let aq_result_set_row_count = unsafe { library.symbol("aq_result_set_row_count")? };
         let aq_result_set_affected_rows = unsafe { library.symbol("aq_result_set_affected_rows")? };
@@ -399,6 +419,7 @@ impl Api {
             aq_connection_get_tables,
             aq_connection_get_databases,
             aq_connection_get_database,
+            aq_connection_inspect_namespace_access,
             aq_result_set_close,
             aq_result_set_row_count,
             aq_result_set_affected_rows,
@@ -636,6 +657,55 @@ impl Connection {
         Ok(ResultSet::new(self.inner.clone(), result_set_id))
     }
 
+    pub fn inspect_namespace_access(
+        &self,
+        catalog: Option<&str>,
+        database: Option<&str>,
+    ) -> Result<NamespaceAccess> {
+        let catalog = make_optional_c_string(catalog, "catalog")?;
+        let database = make_optional_c_string(database, "database")?;
+        let mut raw_access = AqNamespaceAccess {
+            namespace_role: 0,
+            can_get_schema: 0,
+            has_catalog_access: 0,
+            has_namespace_access: 0,
+            qualified_name: AqQualifiedName {
+                part_count: 0,
+                formatted_ptr: ptr::null(),
+                formatted_len: 0,
+                parts: [
+                    AqQualifiedNamePart { role: 0, value_ptr: ptr::null(), value_len: 0 },
+                    AqQualifiedNamePart { role: 0, value_ptr: ptr::null(), value_len: 0 },
+                    AqQualifiedNamePart { role: 0, value_ptr: ptr::null(), value_len: 0 },
+                ],
+            },
+        };
+
+        let status = unsafe {
+            (self.inner.api.aq_connection_inspect_namespace_access)(
+                self.inner.handle,
+                self.open_id()?,
+                catalog.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+                database.as_ref().map_or(ptr::null(), |value| value.as_ptr()),
+                &mut raw_access,
+            )
+        };
+        self.inner
+            .check_status("aq_connection_inspect_namespace_access", status)?;
+
+        let namespace_role = QualifiedNamePartRole::from_raw(raw_access.namespace_role).ok_or_else(|| {
+            Error::status(None, format!("aq_connection_inspect_namespace_access returned unknown role {}", raw_access.namespace_role))
+        })?;
+
+        Ok(NamespaceAccess {
+            can_get_schema: raw_access.can_get_schema == 1,
+            has_catalog_access: raw_access.has_catalog_access == 1,
+            has_namespace_access: raw_access.has_namespace_access == 1,
+            namespace_role,
+            qualified_name: qualified_name_from_raw(&raw_access.qualified_name),
+        })
+    }
+
     pub fn cursor(&self, sql: &str) -> Result<Cursor> {
         let sql = make_c_string(sql, "sql")?;
         let cursor_id = unsafe {
@@ -819,20 +889,7 @@ impl ResultSet {
         self.inner
             .check_status("aq_result_set_table_qualified_name", status)?;
 
-        let mut parts = Vec::with_capacity(raw_name.part_count.min(raw_name.parts.len()));
-        for raw_part in raw_name.parts.iter().take(raw_name.part_count.min(raw_name.parts.len())) {
-            if let Some(role) = QualifiedNamePartRole::from_raw(raw_part.role) {
-                parts.push(QualifiedNamePart {
-                    role,
-                    value: bytes_to_string(raw_part.value_ptr, raw_part.value_len).unwrap_or_default(),
-                });
-            }
-        }
-
-        Ok(QualifiedName {
-            parts,
-            formatted: bytes_to_string(raw_name.formatted_ptr, raw_name.formatted_len).unwrap_or_default(),
-        })
+        Ok(qualified_name_from_raw(&raw_name))
     }
 
     pub fn close(&self) -> Result<()> {
@@ -986,6 +1043,32 @@ fn bytes_to_string(ptr: *const u8, len: usize) -> Option<String> {
     }
     let bytes = unsafe { slice::from_raw_parts(ptr, len) };
     Some(String::from_utf8_lossy(bytes).into_owned())
+}
+
+fn format_qualified_name_parts(parts: &[QualifiedNamePart]) -> String {
+    parts.iter()
+        .filter(|part| !part.value.is_empty())
+        .map(|part| part.value.as_str())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn qualified_name_from_raw(raw_name: &AqQualifiedName) -> QualifiedName {
+    let mut parts = Vec::with_capacity(raw_name.part_count.min(raw_name.parts.len()));
+    for raw_part in raw_name.parts.iter().take(raw_name.part_count.min(raw_name.parts.len())) {
+        if let Some(role) = QualifiedNamePartRole::from_raw(raw_part.role) {
+            parts.push(QualifiedNamePart {
+                role,
+                value: bytes_to_string(raw_part.value_ptr, raw_part.value_len).unwrap_or_default(),
+            });
+        }
+    }
+
+    let formatted = bytes_to_string(raw_name.formatted_ptr, raw_name.formatted_len)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format_qualified_name_parts(&parts));
+
+    QualifiedName { parts, formatted }
 }
 
 fn decode_hex(value: &str) -> std::result::Result<Vec<u8>, ()> {

@@ -400,6 +400,24 @@ pub const ConnectionManager = struct {
         return self.getDatabases(connection_id);
     }
 
+    pub fn inspectNamespaceAccess(
+        self: *ConnectionManager,
+        connection_id: u64,
+        options: types.NamespaceAccessOptions,
+    ) !types.NamespaceAccess {
+        self.state_lock.lock();
+        defer self.state_lock.unlock();
+
+        const entry = self.connections.get(connection_id) orelse {
+            return ConnectionError.ConnectionNotFound;
+        };
+        const spec = self.registry.resolve(entry.kind) orelse {
+            return ConnectionError.DriverNotRegistered;
+        };
+
+        return spec.inspect_namespace_access(self.allocator, entry.handle, options);
+    }
+
     pub fn closeResultSet(self: *ConnectionManager, result_set_id: u64) !void {
         self.state_lock.lock();
         defer self.state_lock.unlock();
@@ -912,6 +930,15 @@ test "manager exposes test and metadata discovery contracts" {
     try std.testing.expect((try manager.resultSetRowCount(databases.id)) >= 1);
     const listed_database = try manager.resultSetCell(databases.id, 0, 0);
     try std.testing.expectEqualStrings("main", listed_database.text);
+
+    const access = try manager.inspectNamespaceAccess(connection.id, .{ .database = "main" });
+    try std.testing.expect(!access.can_get_schema);
+    try std.testing.expect(access.has_namespace_access);
+    try std.testing.expectEqual(types.QualifiedNamePartRole.database, access.namespace_role);
+
+    const access_name = access.qualifiedName();
+    try std.testing.expectEqual(@as(usize, 1), access_name.parts.len);
+    try std.testing.expectEqualStrings("main", access_name.parts[0].value);
 }
 
 test "manager async operations return handles through await" {

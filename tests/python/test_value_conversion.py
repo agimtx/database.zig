@@ -12,6 +12,7 @@ QualifiedName = _binding_module.QualifiedName
 QualifiedNamePart = _binding_module.QualifiedNamePart
 QualifiedNamePartRole = _binding_module.QualifiedNamePartRole
 ResultSet = _binding_module.ResultSet
+NamespaceAccess = _binding_module.NamespaceAccess
 
 
 class _FakeManager:
@@ -35,6 +36,22 @@ class _FakeManager:
                 QualifiedNamePart(role=QualifiedNamePartRole.OBJECT, value="records"),
             ),
             formatted="main.records",
+        )
+
+    def _inspect_namespace_access(self, connection_id: int, catalog: str | None, database: str | None) -> NamespaceAccess:
+        del connection_id, catalog, database
+        return NamespaceAccess(
+            can_get_schema=True,
+            has_catalog_access=True,
+            has_namespace_access=True,
+            namespace_role=QualifiedNamePartRole.SCHEMA,
+            qualified_name=QualifiedName(
+                parts=(
+                    QualifiedNamePart(role=QualifiedNamePartRole.CATALOG, value="analytics"),
+                    QualifiedNamePart(role=QualifiedNamePartRole.SCHEMA, value="public"),
+                ),
+                formatted="analytics.public",
+            ),
         )
 
 
@@ -100,6 +117,12 @@ class ResultValueConversionTests(unittest.TestCase):
             ),
             qualified_name.parts,
         )
+
+    def test_namespace_access_returns_typed_qualified_name(self) -> None:
+        access = _FakeManager(ColumnType.TEXT, "ignored")._inspect_namespace_access(1, None, "public")
+        self.assertTrue(access.can_get_schema)
+        self.assertEqual(QualifiedNamePartRole.SCHEMA, access.namespace_role)
+        self.assertEqual("analytics.public", str(access.qualified_name))
 
 
 if __name__ == "__main__":

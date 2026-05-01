@@ -19,6 +19,8 @@ pub const QualifiedNamePart = types.QualifiedNamePart;
 pub const QualifiedName = types.QualifiedName;
 pub const ConnectOptions = types.ConnectOptions;
 pub const GetTablesOptions = types.GetTablesOptions;
+pub const NamespaceAccessOptions = types.NamespaceAccessOptions;
+pub const NamespaceAccess = types.NamespaceAccess;
 
 pub const ConnectionHandle = driver.ConnectionHandle;
 pub const ResultSetHandle = driver.ResultSetHandle;

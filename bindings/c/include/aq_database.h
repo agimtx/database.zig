@@ -97,6 +97,14 @@ struct aq_qualified_name {
     struct aq_qualified_name_part parts[3];
 };
 
+struct aq_namespace_access {
+    int32_t namespace_role;
+    uint8_t can_get_schema;
+    uint8_t has_catalog_access;
+    uint8_t has_namespace_access;
+    struct aq_qualified_name qualified_name;
+};
+
 struct aq_operation_result {
     uint8_t state;
     int32_t status;
@@ -119,6 +127,7 @@ int32_t aq_connection_test(void *manager, uint64_t connection_id, uint8_t *out_o
 uint64_t aq_connection_get_tables(void *manager, uint64_t connection_id, const char *catalog, const char *database);
 uint64_t aq_connection_get_databases(void *manager, uint64_t connection_id);
 uint64_t aq_connection_get_database(void *manager, uint64_t connection_id);
+int32_t aq_connection_inspect_namespace_access(void *manager, uint64_t connection_id, const char *catalog, const char *database, struct aq_namespace_access *out_access);
 int32_t aq_result_set_close(void *manager, uint64_t result_set_id);
 int32_t aq_result_set_row_count(void *manager, uint64_t result_set_id, uint64_t *out_row_count);
 int32_t aq_result_set_affected_rows(void *manager, uint64_t result_set_id, uint64_t *out_affected_rows);

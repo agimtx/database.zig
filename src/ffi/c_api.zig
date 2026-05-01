@@ -44,6 +44,14 @@ pub const AqQualifiedName = extern struct {
     parts: [3]AqQualifiedNamePart,
 };
 
+pub const AqNamespaceAccess = extern struct {
+    namespace_role: i32,
+    can_get_schema: u8,
+    has_catalog_access: u8,
+    has_namespace_access: u8,
+    qualified_name: AqQualifiedName,
+};
+
 pub const AqResultCell = extern struct {
     text_ptr: [*]const u8,
     text_len: usize,
@@ -62,6 +70,8 @@ pub const AqErrorMessage = extern struct {
 };
 
 const ffi_allocator = std.heap.page_allocator;
+
+threadlocal var namespace_access_scratch: [3]?[]u8 = .{ null, null, null };
 
 fn castManager(raw_manager: ?*anyopaque) ?*root.ConnectionManager {
     const opaque_ptr = raw_manager orelse return null;
@@ -119,6 +129,29 @@ fn clearQualifiedName(out_name: *AqQualifiedName) void {
             .{ .role = @intFromEnum(root.QualifiedNamePartRole.catalog), .value_ptr = null, .value_len = 0 },
         },
     };
+}
+
+fn clearNamespaceAccess(out_access: *AqNamespaceAccess) void {
+    out_access.namespace_role = @intFromEnum(root.QualifiedNamePartRole.database);
+    out_access.can_get_schema = 0;
+    out_access.has_catalog_access = 0;
+    out_access.has_namespace_access = 0;
+    clearQualifiedName(&out_access.qualified_name);
+}
+
+fn clearNamespaceAccessScratch() void {
+    for (&namespace_access_scratch) |*slot| {
+        if (slot.*) |value| {
+            ffi_allocator.free(value);
+            slot.* = null;
+        }
+    }
+}
+
+fn storeNamespaceAccessScratch(index: usize, value: []const u8) ![]const u8 {
+    const owned = try ffi_allocator.dupe(u8, value);
+    namespace_access_scratch[index] = owned;
+    return owned;
 }
 
 fn fillQualifiedNamePart(out_part: *AqQualifiedNamePart, role: root.QualifiedNamePartRole, value: []const u8) void {
@@ -328,6 +361,60 @@ pub fn aq_connection_get_databases(raw_manager: ?*anyopaque, connection_id: u64)
 
 pub fn aq_connection_get_database(raw_manager: ?*anyopaque, connection_id: u64) u64 {
     return aq_connection_get_databases(raw_manager, connection_id);
+}
+
+pub fn aq_connection_inspect_namespace_access(
+    raw_manager: ?*anyopaque,
+    connection_id: u64,
+    catalog: ?[*:0]const u8,
+    database: ?[*:0]const u8,
+    out_access: ?*AqNamespaceAccess,
+) i32 {
+    const manager = castManager(raw_manager) orelse return aq_invalid_argument;
+    clearManagerError(manager);
+    const access_out = out_access orelse return aq_invalid_argument;
+    clearNamespaceAccess(access_out);
+    clearNamespaceAccessScratch();
+
+    const access = manager.inspectNamespaceAccess(connection_id, .{
+        .catalog = if (catalog) |value| std.mem.span(value) else null,
+        .database = if (database) |value| std.mem.span(value) else null,
+    }) catch |err| {
+        setManagerError(manager, err);
+        return mapError(err);
+    };
+
+    access_out.namespace_role = @intFromEnum(access.namespace_role);
+    access_out.can_get_schema = if (access.can_get_schema) 1 else 0;
+    access_out.has_catalog_access = if (access.has_catalog_access) 1 else 0;
+    access_out.has_namespace_access = if (access.has_namespace_access) 1 else 0;
+    access_out.qualified_name.part_count = access.part_count;
+    var index: usize = 0;
+    while (index < access.part_count and index < access.parts.len) : (index += 1) {
+        const owned_value = storeNamespaceAccessScratch(index, access.parts[index].value) catch |err| {
+            setManagerError(manager, err);
+            clearNamespaceAccess(access_out);
+            clearNamespaceAccessScratch();
+            return mapError(err);
+        };
+        fillQualifiedNamePart(
+            &access_out.qualified_name.parts[index],
+            access.parts[index].role,
+            owned_value,
+        );
+    }
+
+    const formatted = access.qualifiedName().format(ffi_allocator, ".") catch |err| {
+        setManagerError(manager, err);
+        clearNamespaceAccess(access_out);
+        clearNamespaceAccessScratch();
+        return mapError(err);
+    };
+    namespace_access_scratch[2] = formatted;
+    access_out.qualified_name.formatted_ptr = formatted.ptr;
+    access_out.qualified_name.formatted_len = formatted.len;
+
+    return aq_ok;
 }
 
 pub fn aq_result_set_close(raw_manager: ?*anyopaque, result_set_id: u64) i32 {
@@ -714,4 +801,39 @@ test "c api exposes table qualified name metadata" {
     }
 
     try std.testing.expect(matched);
+}
+
+test "c api exposes namespace access metadata" {
+    if (!adbc_backend.sqliteDriverUsable(std.testing.allocator)) {
+        return error.SkipZigTest;
+    }
+
+    const raw_manager = aq_manager_create() orelse return error.OutOfMemory;
+    defer aq_manager_destroy(raw_manager);
+
+    const dsn = try adbc_backend.testSqliteDsn(std.testing.allocator);
+    defer std.testing.allocator.free(dsn);
+    const dsn_z = try std.testing.allocator.dupeZ(u8, dsn);
+    defer std.testing.allocator.free(dsn_z);
+
+    const connection_id = aq_connection_open(raw_manager, 1, dsn_z.ptr);
+    try std.testing.expect(connection_id != 0);
+    defer {
+        std.testing.expectEqual(aq_ok, aq_connection_close(raw_manager, connection_id)) catch unreachable;
+    }
+
+    const main_z = try std.testing.allocator.dupeZ(u8, "main");
+    defer std.testing.allocator.free(main_z);
+
+    var access: AqNamespaceAccess = undefined;
+    try std.testing.expectEqual(
+        aq_ok,
+        aq_connection_inspect_namespace_access(raw_manager, connection_id, null, main_z.ptr, &access),
+    );
+    try std.testing.expectEqual(@as(i32, @intFromEnum(root.QualifiedNamePartRole.database)), access.namespace_role);
+    try std.testing.expectEqual(@as(u8, 0), access.can_get_schema);
+    try std.testing.expectEqual(@as(u8, 1), access.has_namespace_access);
+    try std.testing.expectEqual(@as(usize, 1), access.qualified_name.part_count);
+    try std.testing.expectEqualStrings("main", textFromPointer(access.qualified_name.parts[0].value_ptr, access.qualified_name.parts[0].value_len));
+    try std.testing.expectEqual(@as(usize, 0), access.qualified_name.formatted_len);
 }

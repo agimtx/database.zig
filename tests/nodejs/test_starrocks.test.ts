@@ -5,6 +5,7 @@ import {
   assertBooleanValue,
   assertColumnMetadata,
   assertErrorMessage,
+  assertNamespaceAccess,
   assertNonEmptyValue,
   assertTableQualifiedName,
   assertTypeCoverage,
@@ -223,6 +224,24 @@ async function runStarRocksLifecycleTest(): Promise<void> {
         } finally {
           await tablesResult.close();
         }
+
+        const namespaceAccess = await databaseConnection.inspectNamespaceAccess(null, databaseName);
+        assertNamespaceAccess(namespaceAccess, {
+          canGetSchema: false,
+          hasCatalogAccess: true,
+          hasNamespaceAccess: true,
+          namespaceRole: bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE,
+          parts: [{ role: bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE, value: databaseName }],
+        });
+
+        const missingAccess = await databaseConnection.inspectNamespaceAccess(null, missingDatabase);
+        assertNamespaceAccess(missingAccess, {
+          canGetSchema: false,
+          hasCatalogAccess: true,
+          hasNamespaceAccess: false,
+          namespaceRole: bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE,
+          parts: [{ role: bindingModule.QUALIFIED_NAME_PART_ROLES.DATABASE, value: missingDatabase }],
+        });
       } finally {
         await databaseConnection.close();
       }

@@ -81,6 +81,22 @@ declare namespace aqDatabase {
     toString(): string;
   }
 
+  class NamespaceAccess {
+    constructor(
+      canGetSchema: boolean,
+      hasCatalogAccess: boolean,
+      hasNamespaceAccess: boolean,
+      namespaceRole: QualifiedNamePartRole,
+      qualifiedName: QualifiedName,
+    );
+
+    canGetSchema: boolean;
+    hasCatalogAccess: boolean;
+    hasNamespaceAccess: boolean;
+    namespaceRole: QualifiedNamePartRole;
+    qualifiedName: QualifiedName;
+  }
+
   class ConnectionManager {
     constructor(libraryPath?: string | null);
 
@@ -109,6 +125,8 @@ declare namespace aqDatabase {
     getDatabases(): Promise<ResultSet>;
     getTablesSync(catalog?: string | null, database?: string | null): ResultSet;
     getTables(catalog?: string | null, database?: string | null): Promise<ResultSet>;
+    inspectNamespaceAccessSync(catalog?: string | null, database?: string | null): NamespaceAccess;
+    inspectNamespaceAccess(catalog?: string | null, database?: string | null): Promise<NamespaceAccess>;
     cursorSync(sql: string): Cursor;
     cursor(sql: string): Promise<Cursor>;
     closeSync(): void;
@@ -149,6 +167,7 @@ declare const aqDatabase: {
   ConnectionManager: typeof aqDatabase.ConnectionManager;
   Cursor: typeof aqDatabase.Cursor;
   DRIVER_KINDS: typeof aqDatabase.DRIVER_KINDS;
+  NamespaceAccess: typeof aqDatabase.NamespaceAccess;
   QualifiedName: typeof aqDatabase.QualifiedName;
   QualifiedNamePart: typeof aqDatabase.QualifiedNamePart;
   QUALIFIED_NAME_PART_ROLES: typeof aqDatabase.QUALIFIED_NAME_PART_ROLES;

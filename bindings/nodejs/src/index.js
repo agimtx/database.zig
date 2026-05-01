@@ -80,6 +80,11 @@ const QUALIFIED_NAME_FORMATTED_PTR_OFFSET = alignOffset(SIZE_T_SIZE, POINTER_SIZ
 const QUALIFIED_NAME_FORMATTED_LEN_OFFSET = QUALIFIED_NAME_FORMATTED_PTR_OFFSET + POINTER_SIZE;
 const QUALIFIED_NAME_PARTS_OFFSET = alignOffset(QUALIFIED_NAME_FORMATTED_LEN_OFFSET + SIZE_T_SIZE, POINTER_SIZE);
 const QUALIFIED_NAME_SIZE = alignStructSize(QUALIFIED_NAME_PARTS_OFFSET + (QUALIFIED_NAME_PART_SIZE * 3));
+const NAMESPACE_ACCESS_CAN_GET_SCHEMA_OFFSET = INT32_SIZE;
+const NAMESPACE_ACCESS_HAS_CATALOG_ACCESS_OFFSET = NAMESPACE_ACCESS_CAN_GET_SCHEMA_OFFSET + 1;
+const NAMESPACE_ACCESS_HAS_NAMESPACE_ACCESS_OFFSET = NAMESPACE_ACCESS_HAS_CATALOG_ACCESS_OFFSET + 1;
+const NAMESPACE_ACCESS_QUALIFIED_NAME_OFFSET = alignOffset(NAMESPACE_ACCESS_HAS_NAMESPACE_ACCESS_OFFSET + 1, POINTER_SIZE);
+const NAMESPACE_ACCESS_SIZE = alignStructSize(NAMESPACE_ACCESS_QUALIFIED_NAME_OFFSET + QUALIFIED_NAME_SIZE);
 
 function raiseOnStatus(status, operation) {
   if (status === 0) {
@@ -240,10 +245,24 @@ class QualifiedName {
   }
 }
 
+class NamespaceAccess {
+  constructor(canGetSchema, hasCatalogAccess, hasNamespaceAccess, namespaceRole, qualifiedName) {
+    this.canGetSchema = canGetSchema;
+    this.hasCatalogAccess = hasCatalogAccess;
+    this.hasNamespaceAccess = hasNamespaceAccess;
+    this.namespaceRole = namespaceRole;
+    this.qualifiedName = qualifiedName;
+  }
+}
+
+function formatQualifiedNameParts(parts) {
+  return parts.filter((part) => part.value.length !== 0).map((part) => part.value).join(".");
+}
+
 function readQualifiedName(buffer) {
   const partCount = readSizeTAt(buffer, 0);
   const formattedLength = readSizeTAt(buffer, QUALIFIED_NAME_FORMATTED_LEN_OFFSET);
-  const formatted = formattedLength > 0
+  let formatted = formattedLength > 0
     ? ref.readPointer(buffer, QUALIFIED_NAME_FORMATTED_PTR_OFFSET, formattedLength).toString("utf8")
     : "";
 
@@ -257,7 +276,21 @@ function readQualifiedName(buffer) {
     parts.push(new QualifiedNamePart(buffer.readInt32LE(baseOffset), value));
   }
 
+  if (formatted.length === 0) {
+    formatted = formatQualifiedNameParts(parts);
+  }
+
   return new QualifiedName(parts, formatted);
+}
+
+function readNamespaceAccess(buffer) {
+  return new NamespaceAccess(
+    buffer.readUInt8(NAMESPACE_ACCESS_CAN_GET_SCHEMA_OFFSET) === 1,
+    buffer.readUInt8(NAMESPACE_ACCESS_HAS_CATALOG_ACCESS_OFFSET) === 1,
+    buffer.readUInt8(NAMESPACE_ACCESS_HAS_NAMESPACE_ACCESS_OFFSET) === 1,
+    buffer.readInt32LE(0),
+    readQualifiedName(buffer.subarray(NAMESPACE_ACCESS_QUALIFIED_NAME_OFFSET, NAMESPACE_ACCESS_QUALIFIED_NAME_OFFSET + QUALIFIED_NAME_SIZE)),
+  );
 }
 
 function resolveLibraryPath(explicitPath) {
@@ -300,6 +333,7 @@ class ConnectionManager {
       aq_connection_execute_async: ["uint64", ["pointer", "uint64", "string"]],
       aq_connection_get_tables: ["uint64", ["pointer", "uint64", "string", "string"]],
       aq_connection_get_databases: ["uint64", ["pointer", "uint64"]],
+      aq_connection_inspect_namespace_access: ["int32", ["pointer", "uint64", "string", "string", "pointer"]],
       aq_result_set_close: ["int32", ["pointer", "uint64"]],
       aq_result_set_row_count: ["int32", ["pointer", "uint64", "pointer"]],
       aq_result_set_affected_rows: ["int32", ["pointer", "uint64", "pointer"]],
@@ -449,6 +483,22 @@ class ConnectionManager {
     }
 
     return new ResultSet(this, Number(resultSetId));
+  }
+
+  _inspectNamespaceAccessSync(connectionId, catalog, database) {
+    const accessBuffer = Buffer.alloc(NAMESPACE_ACCESS_SIZE);
+    this._raiseOnStatus(
+      this.lib.aq_connection_inspect_namespace_access(this.manager, connectionId, catalog ?? null, database ?? null, accessBuffer),
+      "aq_connection_inspect_namespace_access",
+    );
+    return readNamespaceAccess(accessBuffer);
+  }
+
+  async _inspectNamespaceAccess(connectionId, catalog, database) {
+    const accessBuffer = Buffer.alloc(NAMESPACE_ACCESS_SIZE);
+    const status = await callAsync(this.lib.aq_connection_inspect_namespace_access, [this.manager, connectionId, catalog ?? null, database ?? null, accessBuffer]);
+    this._raiseOnStatus(status, "aq_connection_inspect_namespace_access");
+    return readNamespaceAccess(accessBuffer);
   }
 
   _resultSetClose(resultSetId) {
@@ -647,6 +697,14 @@ class Connection {
     return this.manager._getTables(this.id, catalog, database);
   }
 
+  inspectNamespaceAccessSync(catalog = null, database = null) {
+    return this.manager._inspectNamespaceAccessSync(this.id, catalog, database);
+  }
+
+  async inspectNamespaceAccess(catalog = null, database = null) {
+    return this.manager._inspectNamespaceAccess(this.id, catalog, database);
+  }
+
   cursorSync(sql) {
     return this.manager._openCursorSync(this.id, sql);
   }
@@ -733,6 +791,7 @@ module.exports = {
   ConnectionManager,
   Cursor,
   DRIVER_KINDS,
+  NamespaceAccess,
   QualifiedName,
   QualifiedNamePart,
   QUALIFIED_NAME_PART_ROLES,

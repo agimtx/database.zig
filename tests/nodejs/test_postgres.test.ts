@@ -6,6 +6,7 @@ import {
   assertColumnMetadata,
   assertErrorMessage,
   assertHexValue,
+  assertNamespaceAccess,
   assertNonEmptyValue,
   assertTableQualifiedName,
   assertTypeCoverage,
@@ -294,6 +295,31 @@ async function runPostgresLifecycleTest(): Promise<void> {
         } finally {
           await tablesResult.close();
         }
+
+        const namespaceAccess = await databaseConnection.inspectNamespaceAccess(databaseName, "public");
+        assertNamespaceAccess(namespaceAccess, {
+          canGetSchema: true,
+          hasCatalogAccess: true,
+          hasNamespaceAccess: true,
+          namespaceRole: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA,
+          parts: [
+            { role: bindingModule.QUALIFIED_NAME_PART_ROLES.CATALOG, value: databaseName },
+            { role: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA, value: "public" },
+          ],
+        });
+
+        const missingSchema = uniqueIdentifier("missing_schema");
+        const missingAccess = await databaseConnection.inspectNamespaceAccess(databaseName, missingSchema);
+        assertNamespaceAccess(missingAccess, {
+          canGetSchema: true,
+          hasCatalogAccess: true,
+          hasNamespaceAccess: false,
+          namespaceRole: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA,
+          parts: [
+            { role: bindingModule.QUALIFIED_NAME_PART_ROLES.CATALOG, value: databaseName },
+            { role: bindingModule.QUALIFIED_NAME_PART_ROLES.SCHEMA, value: missingSchema },
+          ],
+        });
       } finally {
         await databaseConnection.close();
       }

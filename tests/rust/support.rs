@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use aq_database::{ColumnMetadata, ColumnType, ConnectionManager, DriverKind, Error, QualifiedNamePartRole, Value};
+use aq_database::{ColumnMetadata, ColumnType, ConnectionManager, DriverKind, Error, NamespaceAccess, QualifiedNamePartRole, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -259,6 +259,38 @@ pub fn assert_table_qualified_name(result_set: &aq_database::ResultSet, row_inde
     }
 
     Ok(())
+}
+
+pub fn assert_namespace_access(
+    access: &NamespaceAccess,
+    can_get_schema: bool,
+    has_catalog_access: bool,
+    has_namespace_access: bool,
+    namespace_role: QualifiedNamePartRole,
+    expected_parts: &[(QualifiedNamePartRole, &str)],
+) {
+    assert_eq!(access.can_get_schema, can_get_schema);
+    assert_eq!(access.has_catalog_access, has_catalog_access);
+    assert_eq!(access.has_namespace_access, has_namespace_access);
+    assert_eq!(access.namespace_role, namespace_role);
+    assert_eq!(
+        access
+            .qualified_name
+            .parts
+            .iter()
+            .map(|part| (part.role, part.value.as_str()))
+            .collect::<Vec<_>>(),
+        expected_parts.to_vec()
+    );
+    assert_eq!(
+        access.qualified_name.formatted,
+        expected_parts
+            .iter()
+            .map(|(_, value)| *value)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(".")
+    );
 }
 
 fn namespace_kind_role(namespace_kind: &str) -> QualifiedNamePartRole {

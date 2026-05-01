@@ -4,7 +4,7 @@ import datetime as dt
 import unittest
 from decimal import Decimal
 
-from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, is_runtime_unavailable_error, load_test_target, read_result_set_values, should_run_section, unique_identifier
+from _support import ConnectionManager, ColumnType, QualifiedNamePartRole, assert_boolean_value, assert_column_metadata, assert_namespace_access, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, is_runtime_unavailable_error, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
 
 STARROCKS_ADDITIONAL_TYPES_SQL = (
@@ -196,6 +196,26 @@ class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                         assert_table_qualified_name(tables_result, find_result_set_row_index(tables_result, 2, table_name))
                     finally:
                         await tables_result.close_async()
+
+                    namespace_access = await database_connection.inspect_namespace_access_async(database=database_name)
+                    assert_namespace_access(
+                        namespace_access,
+                        can_get_schema=False,
+                        has_catalog_access=True,
+                        has_namespace_access=True,
+                        namespace_role=QualifiedNamePartRole.DATABASE,
+                        expected_parts=[(QualifiedNamePartRole.DATABASE, database_name)],
+                    )
+
+                    missing_access = await database_connection.inspect_namespace_access_async(database=missing_database)
+                    assert_namespace_access(
+                        missing_access,
+                        can_get_schema=False,
+                        has_catalog_access=True,
+                        has_namespace_access=False,
+                        namespace_role=QualifiedNamePartRole.DATABASE,
+                        expected_parts=[(QualifiedNamePartRole.DATABASE, missing_database)],
+                    )
                 finally:
                     await database_connection.close_async()
             finally:

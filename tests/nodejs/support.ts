@@ -10,6 +10,7 @@ type ColumnMetadata = import("../../bindings/nodejs/src/index").ColumnMetadata;
 type ColumnType = import("../../bindings/nodejs/src/index").ColumnType;
 type ResultValue = import("../../bindings/nodejs/src/index").ResultValue;
 type QualifiedNamePartRole = import("../../bindings/nodejs/src/index").QualifiedNamePartRole;
+type NamespaceAccess = import("../../bindings/nodejs/src/index").NamespaceAccess;
 
 type DriverName = "adbc";
 type SectionConfig = Record<string, string>;
@@ -296,6 +297,32 @@ export function assertTableQualifiedName(resultSet: ResultSet, rowIndex: number)
   );
   assert.equal(qualifiedName.formatted, formatted);
   return qualifiedName;
+}
+
+export function assertNamespaceAccess(
+  access: NamespaceAccess,
+  expected: {
+    canGetSchema: boolean;
+    hasCatalogAccess: boolean;
+    hasNamespaceAccess: boolean;
+    namespaceRole: QualifiedNamePartRole;
+    parts: Array<{ role: QualifiedNamePartRole; value: string }>;
+  },
+) {
+  assert.ok(access instanceof bindingModule.NamespaceAccess);
+  assert.equal(access.canGetSchema, expected.canGetSchema);
+  assert.equal(access.hasCatalogAccess, expected.hasCatalogAccess);
+  assert.equal(access.hasNamespaceAccess, expected.hasNamespaceAccess);
+  assert.equal(access.namespaceRole, expected.namespaceRole);
+  assert.deepEqual(
+    access.qualifiedName.parts.map((part) => ({ role: part.role, value: part.value })),
+    expected.parts,
+  );
+  assert.equal(
+    access.qualifiedName.formatted,
+    expected.parts.map((part) => part.value).filter((value) => value.length !== 0).join("."),
+  );
+  return access;
 }
 
 export function assertNonEmptyValue(value: ResultValue, label: string): asserts value is string {

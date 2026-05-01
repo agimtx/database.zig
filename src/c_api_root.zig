@@ -61,6 +61,16 @@ export fn aq_connection_get_database(raw_manager: ?*anyopaque, connection_id: u6
     return ffi.aq_connection_get_database(raw_manager, connection_id);
 }
 
+export fn aq_connection_inspect_namespace_access(
+    raw_manager: ?*anyopaque,
+    connection_id: u64,
+    catalog: ?[*:0]const u8,
+    database: ?[*:0]const u8,
+    out_access: ?*ffi.AqNamespaceAccess,
+) i32 {
+    return ffi.aq_connection_inspect_namespace_access(raw_manager, connection_id, catalog, database, out_access);
+}
+
 export fn aq_result_set_close(raw_manager: ?*anyopaque, result_set_id: u64) i32 {
     return ffi.aq_result_set_close(raw_manager, result_set_id);
 }

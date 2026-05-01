@@ -4,7 +4,7 @@ import datetime as dt
 from decimal import Decimal
 import unittest
 
-from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_table_qualified_name, assert_type_coverage, duckdb_test_dsn, find_result_set_row_index, is_runtime_unavailable_error, read_result_set_values, remove_file_if_exists, repo_tmp_dir, should_run_section, unique_identifier, vendored_adbc_driver_path
+from _support import ConnectionManager, ColumnType, QualifiedNamePartRole, assert_boolean_value, assert_column_metadata, assert_namespace_access, assert_table_qualified_name, assert_type_coverage, duckdb_test_dsn, find_result_set_row_index, is_runtime_unavailable_error, read_result_set_values, remove_file_if_exists, repo_tmp_dir, should_run_section, unique_identifier, vendored_adbc_driver_path
 
 
 def build_duckdb_type_coverage_case(table_name: str) -> dict[str, object]:
@@ -155,6 +155,27 @@ class DuckDBBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                         self.assertIn("main", read_result_set_values(databases_result, 0))
                     finally:
                         await databases_result.close_async()
+
+                    namespace_access = await connection.inspect_namespace_access_async(database="main")
+                    assert_namespace_access(
+                        namespace_access,
+                        can_get_schema=True,
+                        has_catalog_access=True,
+                        has_namespace_access=True,
+                        namespace_role=QualifiedNamePartRole.SCHEMA,
+                        expected_parts=[(QualifiedNamePartRole.SCHEMA, "main")],
+                    )
+
+                    missing_namespace = unique_identifier("missing_schema")
+                    missing_access = await connection.inspect_namespace_access_async(database=missing_namespace)
+                    assert_namespace_access(
+                        missing_access,
+                        can_get_schema=True,
+                        has_catalog_access=True,
+                        has_namespace_access=False,
+                        namespace_role=QualifiedNamePartRole.SCHEMA,
+                        expected_parts=[(QualifiedNamePartRole.SCHEMA, missing_namespace)],
+                    )
                 finally:
                     await connection.close_async()
 

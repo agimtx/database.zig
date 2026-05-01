@@ -101,6 +101,16 @@ class _CQualifiedName(ctypes.Structure):
     ]
 
 
+class _CNamespaceAccess(ctypes.Structure):
+    _fields_ = [
+        ("namespace_role", ctypes.c_int32),
+        ("can_get_schema", ctypes.c_uint8),
+        ("has_catalog_access", ctypes.c_uint8),
+        ("has_namespace_access", ctypes.c_uint8),
+        ("qualified_name", _CQualifiedName),
+    ]
+
+
 class _COperationResult(ctypes.Structure):
     _fields_ = [
         ("state", ctypes.c_uint8),
@@ -148,7 +158,20 @@ class QualifiedName:
         return self.formatted
 
 
+@dataclass(frozen=True)
+class NamespaceAccess:
+    can_get_schema: bool
+    has_catalog_access: bool
+    has_namespace_access: bool
+    namespace_role: QualifiedNamePartRole
+    qualified_name: QualifiedName
+
+
 ResultValue = bool | int | float | str | bytes | Decimal | dt.date | dt.time | dt.datetime | uuid.UUID | list[Any] | dict[str, Any]
+
+
+def _format_qualified_name_parts(parts: tuple[QualifiedNamePart, ...] | list[QualifiedNamePart]) -> str:
+    return ".".join(part.value for part in parts if part.value)
 
 
 def _decode_result_value(raw_value: str | None, column_type: ColumnType) -> ResultValue | None:
@@ -286,6 +309,12 @@ class Connection:
     async def get_tables_async(self, catalog: str | None = None, database: str | None = None) -> ResultSet:
         return await self._manager._get_tables_async(self.id, catalog, database)
 
+    def inspect_namespace_access(self, catalog: str | None = None, database: str | None = None) -> NamespaceAccess:
+        return self._manager._inspect_namespace_access(self.id, catalog, database)
+
+    async def inspect_namespace_access_async(self, catalog: str | None = None, database: str | None = None) -> NamespaceAccess:
+        return await self._manager._inspect_namespace_access_async(self.id, catalog, database)
+
     def close(self) -> None:
         self._manager.close_connection(self.id)
 
@@ -381,6 +410,8 @@ class ConnectionManager:
         self._lib.aq_connection_get_tables.restype = ctypes.c_uint64
         self._lib.aq_connection_get_databases.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
         self._lib.aq_connection_get_databases.restype = ctypes.c_uint64
+        self._lib.aq_connection_inspect_namespace_access.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(_CNamespaceAccess)]
+        self._lib.aq_connection_inspect_namespace_access.restype = ctypes.c_int32
         self._lib.aq_result_set_close.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
         self._lib.aq_result_set_close.restype = ctypes.c_int32
         self._lib.aq_result_set_row_count.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64)]
@@ -466,6 +497,37 @@ class ConnectionManager:
     async def _get_tables_async(self, connection_id: int, catalog: str | None, database: str | None) -> ResultSet:
         return await asyncio.to_thread(self._get_tables, connection_id, catalog, database)
 
+    def _inspect_namespace_access(self, connection_id: int, catalog: str | None, database: str | None) -> NamespaceAccess:
+        raw_access = _CNamespaceAccess()
+        self._raise_on_status(
+            self._lib.aq_connection_inspect_namespace_access(
+                self._manager,
+                connection_id,
+                catalog.encode("utf-8") if catalog is not None else None,
+                database.encode("utf-8") if database is not None else None,
+                ctypes.byref(raw_access),
+            ),
+            "aq_connection_inspect_namespace_access",
+        )
+
+        parts: list[QualifiedNamePart] = []
+        for index in range(raw_access.qualified_name.part_count):
+            raw_part = raw_access.qualified_name.parts[index]
+            value = ctypes.string_at(raw_part.value_ptr, raw_part.value_len).decode("utf-8") if raw_part.value_ptr and raw_part.value_len > 0 else ""
+            parts.append(QualifiedNamePart(role=QualifiedNamePartRole(raw_part.role), value=value))
+
+        formatted = ctypes.string_at(raw_access.qualified_name.formatted_ptr, raw_access.qualified_name.formatted_len).decode("utf-8") if raw_access.qualified_name.formatted_ptr and raw_access.qualified_name.formatted_len > 0 else _format_qualified_name_parts(parts)
+        return NamespaceAccess(
+            can_get_schema=bool(raw_access.can_get_schema),
+            has_catalog_access=bool(raw_access.has_catalog_access),
+            has_namespace_access=bool(raw_access.has_namespace_access),
+            namespace_role=QualifiedNamePartRole(raw_access.namespace_role),
+            qualified_name=QualifiedName(parts=tuple(parts), formatted=formatted),
+        )
+
+    async def _inspect_namespace_access_async(self, connection_id: int, catalog: str | None, database: str | None) -> NamespaceAccess:
+        return await asyncio.to_thread(self._inspect_namespace_access, connection_id, catalog, database)
+
     def _result_set_close(self, result_set_id: int) -> None:
         self._raise_on_status(
             self._lib.aq_result_set_close(self._manager, result_set_id),
@@ -524,7 +586,7 @@ class ConnectionManager:
             value = ctypes.string_at(raw_part.value_ptr, raw_part.value_len).decode("utf-8") if raw_part.value_ptr and raw_part.value_len > 0 else ""
             parts.append(QualifiedNamePart(role=QualifiedNamePartRole(raw_part.role), value=value))
 
-        formatted = ctypes.string_at(raw_name.formatted_ptr, raw_name.formatted_len).decode("utf-8") if raw_name.formatted_ptr and raw_name.formatted_len > 0 else ""
+        formatted = ctypes.string_at(raw_name.formatted_ptr, raw_name.formatted_len).decode("utf-8") if raw_name.formatted_ptr and raw_name.formatted_len > 0 else _format_qualified_name_parts(parts)
         return QualifiedName(parts=tuple(parts), formatted=formatted)
 
     def _open_cursor(self, connection_id: int, sql: str) -> Cursor:

@@ -97,6 +97,27 @@ pub const GetTablesOptions = struct {
     database: ?[]const u8 = null,
 };
 
+pub const NamespaceAccessOptions = struct {
+    catalog: ?[]const u8 = null,
+    database: ?[]const u8 = null,
+};
+
+pub const NamespaceAccess = struct {
+    can_get_schema: bool = false,
+    has_catalog_access: bool = false,
+    has_namespace_access: bool = false,
+    namespace_role: QualifiedNamePartRole = .database,
+    part_count: usize = 0,
+    parts: [2]QualifiedNamePart = .{
+        .{ .role = .catalog, .value = "" },
+        .{ .role = .database, .value = "" },
+    },
+
+    pub fn qualifiedName(self: *const NamespaceAccess) QualifiedName {
+        return .{ .parts = self.parts[0..self.part_count] };
+    }
+};
+
 pub const ConnectOptions = struct {
     driver: DriverKind,
     dsn: []const u8,
@@ -137,4 +158,23 @@ test "qualified name skips empty parts" {
     defer std.testing.allocator.free(formatted);
 
     try std.testing.expectEqualStrings("main.records", formatted);
+}
+
+test "namespace access exposes requested qualified name parts" {
+    const access = NamespaceAccess{
+        .can_get_schema = true,
+        .has_catalog_access = true,
+        .has_namespace_access = true,
+        .namespace_role = .schema,
+        .part_count = 2,
+        .parts = .{
+            .{ .role = .catalog, .value = "analytics" },
+            .{ .role = .schema, .value = "public" },
+        },
+    };
+
+    const formatted = try access.qualifiedName().format(std.testing.allocator, ".");
+    defer std.testing.allocator.free(formatted);
+
+    try std.testing.expectEqualStrings("analytics.public", formatted);
 }

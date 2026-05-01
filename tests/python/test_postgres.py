@@ -5,7 +5,7 @@ import unittest
 import uuid
 from decimal import Decimal
 
-from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_hex_value, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, is_runtime_unavailable_error, load_test_target, read_result_set_values, should_run_section, unique_identifier
+from _support import ConnectionManager, ColumnType, QualifiedNamePartRole, assert_boolean_value, assert_column_metadata, assert_hex_value, assert_namespace_access, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, is_runtime_unavailable_error, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
 
 POSTGRES_ADDITIONAL_TYPES_SQL = (
@@ -270,6 +270,33 @@ class PostgresBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                         assert_table_qualified_name(tables_result, find_result_set_row_index(tables_result, 2, table_name))
                     finally:
                         await tables_result.close_async()
+
+                    namespace_access = await database_connection.inspect_namespace_access_async(catalog=database_name, database="public")
+                    assert_namespace_access(
+                        namespace_access,
+                        can_get_schema=True,
+                        has_catalog_access=True,
+                        has_namespace_access=True,
+                        namespace_role=QualifiedNamePartRole.SCHEMA,
+                        expected_parts=[
+                            (QualifiedNamePartRole.CATALOG, database_name),
+                            (QualifiedNamePartRole.SCHEMA, "public"),
+                        ],
+                    )
+
+                    missing_schema = unique_identifier("missing_schema")
+                    missing_access = await database_connection.inspect_namespace_access_async(catalog=database_name, database=missing_schema)
+                    assert_namespace_access(
+                        missing_access,
+                        can_get_schema=True,
+                        has_catalog_access=True,
+                        has_namespace_access=False,
+                        namespace_role=QualifiedNamePartRole.SCHEMA,
+                        expected_parts=[
+                            (QualifiedNamePartRole.CATALOG, database_name),
+                            (QualifiedNamePartRole.SCHEMA, missing_schema),
+                        ],
+                    )
                 finally:
                     await database_connection.close_async()
             finally:

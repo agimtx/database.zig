@@ -191,7 +191,7 @@ pub fn open(
 
     const manager_path = try resolveDriverManagerPath(temp);
     const vendor_driver_path = try resolveVendorDriverPath(temp, parsed, options.dsn);
-    const inferred_driver_name = inferDriverName(parsed.uri orelse options.dsn);
+    const inferred_driver_name = inferDriverName(parsed.uri orelse options.dsn) orelse inferDriverNameFromPath(vendor_driver_path);
 
     var context = try allocator.create(ConnectionContext);
     errdefer allocator.destroy(context);
@@ -335,6 +335,49 @@ pub fn getDatabases(
     const sql = try buildGetDatabasesSql(allocator, context.vendor_name);
     defer allocator.free(sql);
     return execute(allocator, handle, result_set_id, sql);
+}
+
+pub fn inspectNamespaceAccess(
+    allocator: std.mem.Allocator,
+    handle: *driver.ConnectionHandle,
+    options: types.NamespaceAccessOptions,
+) !types.NamespaceAccess {
+    const context = connectionContext(handle);
+    const vendor_name = context.vendor_name;
+    const namespace_role = metadataNamespaceRole(vendor_name);
+
+    var access = types.NamespaceAccess{
+        .can_get_schema = vendorSupportsSchema(vendor_name),
+        .has_catalog_access = options.catalog == null,
+        .has_namespace_access = options.database == null,
+        .namespace_role = namespace_role,
+        .parts = .{
+            .{ .role = .catalog, .value = "" },
+            .{ .role = namespace_role, .value = "" },
+        },
+    };
+
+    if (options.catalog) |catalog| {
+        if (catalog.len == 0) {
+            access.has_catalog_access = true;
+        } else {
+            access.parts[access.part_count] = .{ .role = .catalog, .value = catalog };
+            access.part_count += 1;
+            access.has_catalog_access = try hasCatalogAccess(allocator, context, catalog);
+        }
+    }
+
+    if (options.database) |database| {
+        if (database.len == 0) {
+            access.has_namespace_access = true;
+        } else {
+            access.parts[access.part_count] = .{ .role = namespace_role, .value = database };
+            access.part_count += 1;
+            access.has_namespace_access = try hasNamespaceAccess(allocator, context, options.catalog, database);
+        }
+    }
+
+    return access;
 }
 
 pub fn openCursor(
@@ -503,7 +546,7 @@ fn resolveDriverManagerPath(allocator: std.mem.Allocator) ![]const u8 {
     } else |_| {}
     const relative = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ vendoredLibDir(), managerLibraryFilename() });
     defer allocator.free(relative);
-    return std.fs.cwd().realpathAlloc(allocator, relative);
+    return resolveRepoRelativePathAlloc(allocator, relative);
 }
 
 fn resolveVendorDriverPath(allocator: std.mem.Allocator, parsed: ParsedDsn, dsn: []const u8) ![]const u8 {
@@ -542,6 +585,24 @@ fn inferDriverName(dsn: []const u8) ?[]const u8 {
     return null;
 }
 
+fn inferDriverNameFromPath(path: []const u8) ?[]const u8 {
+    const base_name = std.fs.path.basename(path);
+    if (std.mem.indexOf(u8, base_name, "duckdb") != null) return "duckdb";
+    if (std.mem.indexOf(u8, base_name, "postgresql") != null) return "postgresql";
+    if (std.mem.indexOf(u8, base_name, "sqlite") != null) return "sqlite";
+    if (std.mem.indexOf(u8, base_name, "snowflake") != null) return "snowflake";
+    if (std.mem.indexOf(u8, base_name, "mysql") != null) return "mysql";
+    if (std.mem.indexOf(u8, base_name, "bigquery") != null) return "bigquery";
+    if (std.mem.indexOf(u8, base_name, "mssql") != null) return "mssql";
+    if (std.mem.indexOf(u8, base_name, "redshift") != null) return "redshift";
+    if (std.mem.indexOf(u8, base_name, "trino") != null) return "trino";
+    if (std.mem.indexOf(u8, base_name, "databricks") != null) return "databricks";
+    if (std.mem.indexOf(u8, base_name, "clickhouse") != null) return "clickhouse";
+    if (std.mem.indexOf(u8, base_name, "exasol") != null) return "exasol";
+    if (std.mem.indexOf(u8, base_name, "singlestore") != null) return "singlestore";
+    return null;
+}
+
 fn defaultEntrypointForDriver(name: ?[]const u8) ?[]const u8 {
     const driver_name = name orelse return null;
     if (std.mem.eql(u8, driver_name, "exasol")) return "ExarrowDriverInit";
@@ -552,13 +613,76 @@ fn defaultAdditionalSearchPath(allocator: std.mem.Allocator) ![]const u8 {
     if (std.process.getEnvVarOwned(allocator, "DATABASE_ZIG_ADBC_SEARCH_PATH")) |value| {
         return value;
     } else |_| {}
-    return std.fs.cwd().realpathAlloc(allocator, vendoredLibDir());
+    return resolveRepoRelativePathAlloc(allocator, vendoredLibDir());
 }
 
 fn vendoredDriverPathAlloc(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     const relative = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ vendoredLibDir(), try libraryFilename(name) });
     defer allocator.free(relative);
-    return std.fs.cwd().realpathAlloc(allocator, relative);
+    return resolveRepoRelativePathAlloc(allocator, relative);
+}
+
+fn resolveRepoRelativePathAlloc(allocator: std.mem.Allocator, relative: []const u8) ![]u8 {
+    const cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
+    defer allocator.free(cwd);
+    if (try resolveRepoRelativePathFromStart(allocator, cwd, relative)) |resolved| {
+        return resolved;
+    }
+
+    if (std.process.getEnvVarOwned(allocator, "AQ_DATABASE_LIBRARY_PATH")) |library_path| {
+        defer allocator.free(library_path);
+        if (std.fs.path.dirname(library_path)) |library_dir| {
+            if (try resolveRepoRelativePathFromStart(allocator, library_dir, relative)) |resolved| {
+                return resolved;
+            }
+        }
+    } else |_| {}
+
+    if (std.process.getEnvVarOwned(allocator, "AQ_DATABASE_LIBRARY")) |library_path| {
+        defer allocator.free(library_path);
+        if (std.fs.path.dirname(library_path)) |library_dir| {
+            if (try resolveRepoRelativePathFromStart(allocator, library_dir, relative)) |resolved| {
+                return resolved;
+            }
+        }
+    } else |_| {}
+
+    if (std.process.getEnvVarOwned(allocator, "DATABASE_ZIG_LIBRARY")) |library_path| {
+        defer allocator.free(library_path);
+        if (std.fs.path.dirname(library_path)) |library_dir| {
+            if (try resolveRepoRelativePathFromStart(allocator, library_dir, relative)) |resolved| {
+                return resolved;
+            }
+        }
+    } else |_| {}
+
+    return Error.DriverLoadFailed;
+}
+
+fn resolveRepoRelativePathFromStart(
+    allocator: std.mem.Allocator,
+    start_dir: []const u8,
+    relative: []const u8,
+) !?[]u8 {
+    if (!std.fs.path.isAbsolute(start_dir)) {
+        return null;
+    }
+
+    var current = start_dir;
+    while (true) {
+        const candidate = try std.fs.path.join(allocator, &.{ current, relative });
+        if (std.fs.accessAbsolute(candidate, .{})) {
+            return candidate;
+        } else |_| {
+            allocator.free(candidate);
+        }
+
+        const parent = std.fs.path.dirname(current) orelse return null;
+        if (parent.len == current.len) {
+            return null;
+        }
+        current = parent;
+    }
 }
 
 fn vendoredLibDir() []const u8 {
@@ -2568,6 +2692,142 @@ fn buildGetDatabasesSql(allocator: std.mem.Allocator, vendor_name: []const u8) !
         return allocator.dupe(u8, "select schema_name as database_name from EXA_ALL_SCHEMAS order by schema_name");
     }
     return allocator.dupe(u8, "select schema_name as database_name from information_schema.schemata order by schema_name");
+}
+
+fn hasCatalogAccess(
+    allocator: std.mem.Allocator,
+    context: *ConnectionContext,
+    catalog: []const u8,
+) !bool {
+    const sql = try buildCatalogAccessSql(allocator, context.vendor_name, catalog);
+    defer allocator.free(sql);
+    return queryReturnsRows(allocator, context, sql);
+}
+
+fn hasNamespaceAccess(
+    allocator: std.mem.Allocator,
+    context: *ConnectionContext,
+    catalog: ?[]const u8,
+    namespace: []const u8,
+) !bool {
+    const sql = try buildNamespaceAccessSql(allocator, context.vendor_name, catalog, namespace);
+    defer allocator.free(sql);
+    return queryReturnsRows(allocator, context, sql);
+}
+
+fn queryReturnsRows(
+    allocator: std.mem.Allocator,
+    context: *ConnectionContext,
+    sql: []const u8,
+) !bool {
+    const consumed = try executeStatement(allocator, context, sql);
+    defer consumed.deinit(allocator);
+    return consumed.row_count != 0;
+}
+
+fn buildCatalogAccessSql(
+    allocator: std.mem.Allocator,
+    vendor_name: []const u8,
+    catalog: []const u8,
+) ![]u8 {
+    if (!vendorSupportsCatalog(vendor_name)) {
+        return allocator.dupe(u8, "select 1 where 1 = 0");
+    }
+
+    if (std.mem.eql(u8, vendor_name, "postgresql") or std.mem.eql(u8, vendor_name, "redshift")) {
+        var sql = std.ArrayList(u8).empty;
+        errdefer sql.deinit(allocator);
+        try sql.appendSlice(allocator, "select 1 as visible from pg_database where datistemplate = false and datname = ");
+        try appendSqlStringLiteral(allocator, &sql, catalog);
+        try sql.appendSlice(allocator, " limit 1");
+        return sql.toOwnedSlice(allocator);
+    }
+
+    var sql = std.ArrayList(u8).empty;
+    errdefer sql.deinit(allocator);
+    try sql.appendSlice(allocator, "select 1 as visible from information_schema.schemata where catalog_name = ");
+    try appendSqlStringLiteral(allocator, &sql, catalog);
+    try sql.appendSlice(allocator, " limit 1");
+    return sql.toOwnedSlice(allocator);
+}
+
+fn buildNamespaceAccessSql(
+    allocator: std.mem.Allocator,
+    vendor_name: []const u8,
+    catalog: ?[]const u8,
+    namespace: []const u8,
+) ![]u8 {
+    var sql = std.ArrayList(u8).empty;
+    errdefer sql.deinit(allocator);
+
+    if (std.mem.eql(u8, vendor_name, "sqlite")) {
+        try sql.appendSlice(allocator, "select 1 as visible where ");
+        try appendSqlStringLiteral(allocator, &sql, namespace);
+        try sql.appendSlice(allocator, " = 'main' limit 1");
+        return sql.toOwnedSlice(allocator);
+    }
+
+    if (std.mem.eql(u8, vendor_name, "clickhouse")) {
+        try sql.appendSlice(allocator, "select 1 as visible from system.databases where name = ");
+        try appendSqlStringLiteral(allocator, &sql, namespace);
+        try sql.appendSlice(allocator, " limit 1");
+        return sql.toOwnedSlice(allocator);
+    }
+
+    if (std.mem.eql(u8, vendor_name, "exasol")) {
+        try sql.appendSlice(allocator, "select 1 as visible from EXA_ALL_SCHEMAS where schema_name = ");
+        try appendSqlStringLiteral(allocator, &sql, namespace);
+        try sql.appendSlice(allocator, " limit 1");
+        return sql.toOwnedSlice(allocator);
+    }
+
+    try sql.appendSlice(allocator, "select 1 as visible from information_schema.schemata where schema_name = ");
+    try appendSqlStringLiteral(allocator, &sql, namespace);
+    if (catalog) |catalog_name| {
+        if (catalog_name.len != 0 and vendorSupportsCatalog(vendor_name)) {
+            try sql.appendSlice(allocator, " and catalog_name = ");
+            try appendSqlStringLiteral(allocator, &sql, catalog_name);
+        }
+    }
+    try sql.appendSlice(allocator, " limit 1");
+    return sql.toOwnedSlice(allocator);
+}
+
+fn vendorSupportsCatalog(vendor_name: []const u8) bool {
+    return !(std.mem.eql(u8, vendor_name, "sqlite") or
+        std.mem.eql(u8, vendor_name, "clickhouse") or
+        std.mem.eql(u8, vendor_name, "exasol"));
+}
+
+fn vendorSupportsSchema(vendor_name: []const u8) bool {
+    return std.mem.eql(u8, vendor_name, "duckdb") or
+        std.mem.eql(u8, vendor_name, "postgresql") or
+        std.mem.eql(u8, vendor_name, "redshift") or
+        std.mem.eql(u8, vendor_name, "exasol") or
+        std.mem.eql(u8, vendor_name, "snowflake") or
+        std.mem.eql(u8, vendor_name, "mssql") or
+        std.mem.eql(u8, vendor_name, "trino") or
+        std.mem.eql(u8, vendor_name, "databricks");
+}
+
+fn metadataNamespaceRole(vendor_name: []const u8) types.QualifiedNamePartRole {
+    if (std.mem.eql(u8, vendor_name, "duckdb") or
+        std.mem.eql(u8, vendor_name, "postgresql") or
+        std.mem.eql(u8, vendor_name, "redshift") or
+        std.mem.eql(u8, vendor_name, "exasol") or
+        std.mem.eql(u8, vendor_name, "snowflake") or
+        std.mem.eql(u8, vendor_name, "mssql") or
+        std.mem.eql(u8, vendor_name, "trino") or
+        std.mem.eql(u8, vendor_name, "databricks"))
+    {
+        return .schema;
+    }
+
+    if (std.mem.eql(u8, vendor_name, "bigquery")) {
+        return .dataset;
+    }
+
+    return .database;
 }
 
 fn appendTableQualifiedNames(

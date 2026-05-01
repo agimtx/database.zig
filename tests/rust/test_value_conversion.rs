@@ -1,6 +1,6 @@
 mod support;
 
-use aq_database::{decode_value, ColumnType, Value};
+use aq_database::{decode_value, ColumnType, NamespaceAccess, QualifiedName, QualifiedNamePart, QualifiedNamePartRole, Value};
 
 #[test]
 fn rust_binding_returns_typed_scalars() {
@@ -27,4 +27,31 @@ fn rust_binding_decodes_binary_and_preserves_textual_types() {
         Value::Text("{\"enabled\":true}".to_owned())
     );
     assert_eq!(decode_value(None, ColumnType::Text), Value::Null);
+}
+
+#[test]
+fn rust_binding_namespace_access_keeps_typed_qualified_names() {
+    let access = NamespaceAccess {
+        can_get_schema: true,
+        has_catalog_access: true,
+        has_namespace_access: true,
+        namespace_role: QualifiedNamePartRole::Schema,
+        qualified_name: QualifiedName {
+            parts: vec![
+                QualifiedNamePart {
+                    role: QualifiedNamePartRole::Catalog,
+                    value: "analytics".to_owned(),
+                },
+                QualifiedNamePart {
+                    role: QualifiedNamePartRole::Schema,
+                    value: "public".to_owned(),
+                },
+            ],
+            formatted: "analytics.public".to_owned(),
+        },
+    };
+
+    assert!(access.can_get_schema);
+    assert_eq!(access.namespace_role, QualifiedNamePartRole::Schema);
+    assert_eq!(access.qualified_name.to_string(), "analytics.public");
 }

@@ -24,6 +24,7 @@ if str(PYTHON_BINDING_ROOT) not in sys.path:
 _binding_module = importlib.import_module("aq_database")
 ConnectionManager = _binding_module.ConnectionManager
 ColumnType = _binding_module.ColumnType
+NamespaceAccess = _binding_module.NamespaceAccess
 QualifiedName = _binding_module.QualifiedName
 QualifiedNamePartRole = _binding_module.QualifiedNamePartRole
 
@@ -254,6 +255,25 @@ def assert_table_qualified_name(result_set: object, row_index: int) -> object:
     assert [(part.role, part.value) for part in qualified_name.parts] == expected_parts
     assert qualified_name.formatted == formatted
     return qualified_name
+
+
+def assert_namespace_access(
+    access: object,
+    *,
+    can_get_schema: bool,
+    has_catalog_access: bool,
+    has_namespace_access: bool,
+    namespace_role: object,
+    expected_parts: list[tuple[object, str]],
+) -> object:
+    assert isinstance(access, NamespaceAccess)
+    assert access.can_get_schema is can_get_schema
+    assert access.has_catalog_access is has_catalog_access
+    assert access.has_namespace_access is has_namespace_access
+    assert access.namespace_role == namespace_role
+    assert [(part.role, part.value) for part in access.qualified_name.parts] == expected_parts
+    assert access.qualified_name.formatted == ".".join(value for _, value in expected_parts if value)
+    return access
 
 
 def assert_non_empty_value(value: object | None, label: str) -> None:
