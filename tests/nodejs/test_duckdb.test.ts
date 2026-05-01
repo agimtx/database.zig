@@ -15,6 +15,7 @@ import {
   bindingModule,
   duckDbTestDsn,
   findResultSetRowIndex,
+  isRuntimeUnavailableError,
   readResultSetValues,
   removeFileIfExists,
   repoTmpDir,
@@ -127,7 +128,7 @@ async function assertDuckDbAdditionalTypeCoverage(connection: Connection): Promi
 }
 
 function isDuckDbRuntimeUnavailable(error: unknown): error is Error {
-  return error instanceof Error && (error.message.includes("Could not load") || error.message.includes("Library not loaded"));
+  return isRuntimeUnavailableError(error);
 }
 
 async function runDuckDbLifecycleTest(): Promise<string | null> {

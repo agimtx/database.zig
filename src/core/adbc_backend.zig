@@ -2792,9 +2792,6 @@ fn requireOk(status: u8, error_info: *AdbcError) !void {
 
     if (error_info.message) |message| {
         setLastDriverErrorMessage(std.mem.span(message));
-        std.log.err("ADBC status={d} message={s}", .{ status, std.mem.span(message) });
-    } else {
-        std.log.err("ADBC status={d}", .{status});
     }
 
     if (status == adbc_status_invalid_argument or status == adbc_status_invalid_state) {

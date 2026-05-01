@@ -4,7 +4,7 @@ import datetime as dt
 from decimal import Decimal
 import unittest
 
-from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_table_qualified_name, assert_type_coverage, duckdb_test_dsn, find_result_set_row_index, read_result_set_values, remove_file_if_exists, repo_tmp_dir, should_run_section, unique_identifier, vendored_adbc_driver_path
+from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_table_qualified_name, assert_type_coverage, duckdb_test_dsn, find_result_set_row_index, is_runtime_unavailable_error, read_result_set_values, remove_file_if_exists, repo_tmp_dir, should_run_section, unique_identifier, vendored_adbc_driver_path
 
 
 def build_duckdb_type_coverage_case(table_name: str) -> dict[str, object]:
@@ -125,9 +125,8 @@ class DuckDBBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 try:
                     connection = await manager.connect_async("adbc", dsn)
                 except RuntimeError as error:
-                    message = str(error)
-                    if "Could not load" in message or "Library not loaded" in message:
-                        self.skipTest(message)
+                    if is_runtime_unavailable_error(error):
+                        self.skipTest(str(error))
                     raise
                 try:
                     self.assertTrue(await connection.test_async())
@@ -164,9 +163,8 @@ class DuckDBBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 try:
                     reopened = await manager.connect_async("adbc", dsn)
                 except RuntimeError as error:
-                    message = str(error)
-                    if "Could not load" in message or "Library not loaded" in message:
-                        self.skipTest(message)
+                    if is_runtime_unavailable_error(error):
+                        self.skipTest(str(error))
                     raise
                 try:
                     persisted = await reopened.execute_async(f"select count(*) as row_count from {table_name}")

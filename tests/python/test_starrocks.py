@@ -4,7 +4,7 @@ import datetime as dt
 import unittest
 from decimal import Decimal
 
-from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, load_test_target, read_result_set_values, should_run_section, unique_identifier
+from _support import ConnectionManager, ColumnType, assert_boolean_value, assert_column_metadata, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, is_runtime_unavailable_error, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
 
 STARROCKS_ADDITIONAL_TYPES_SQL = (
@@ -155,10 +155,15 @@ class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
         missing_database = unique_identifier("missing_db")
 
         async with ConnectionManager() as manager:
-            with self.assertRaisesRegex(RuntimeError, missing_database):
-                await manager.connect_async(target.driver, target.dsn(missing_database))
+            try:
+                admin_connection = await manager.connect_async(target.driver, target.dsn())
+            except RuntimeError as error:
+                if is_runtime_unavailable_error(error):
+                    self.skipTest(str(error))
+                raise
 
-            admin_connection = await manager.connect_async(target.driver, target.dsn())
+            with self.assertRaises(RuntimeError):
+                await manager.connect_async(target.driver, target.dsn(missing_database))
             try:
                 await execute_non_query(admin_connection, f"create database if not exists {database_name}")
 

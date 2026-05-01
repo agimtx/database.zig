@@ -97,6 +97,22 @@ zig build test
 
 ## Testing
 
+### Run All Tests
+
+From the repository root, this sequence covers the Zig unit tests plus the Python, Node.js, and Rust binding test suites:
+
+```bash
+zig build test
+zig build shared
+python -m unittest discover -s tests/python -p 'test_*.py'
+npm --prefix bindings/nodejs install
+npm --prefix bindings/nodejs run typecheck:tests
+npm --prefix bindings/nodejs run test:node
+cargo test --manifest-path bindings/rust/Cargo.toml
+```
+
+`zig build shared` should run before the language binding suites so Python, Node.js, and Rust can load `zig-out/lib/libaq_database.*`.
+
 ### Zig Core Unit Tests
 
 Run the Zig unit tests for the control plane and C ABI surface:
@@ -112,13 +128,13 @@ These commands cover database-independent binding behavior such as value convers
 Python:
 
 ```bash
-python -m unittest tests.python.test_value_conversion
+python -m unittest discover -s tests/python -p 'test_value_conversion.py'
 ```
 
 Node.js:
 
 ```bash
-cd bindings/nodejs && npm install
+npm --prefix bindings/nodejs install
 npm --prefix bindings/nodejs exec tsx -- --test ../../tests/nodejs/test_value_conversion.test.ts
 ```
 
@@ -142,7 +158,7 @@ python -m unittest discover -s tests/python -p 'test_*.py'
 Run all Node.js binding tests:
 
 ```bash
-cd bindings/nodejs && npm install
+npm --prefix bindings/nodejs install
 npm --prefix bindings/nodejs run typecheck:tests
 npm --prefix bindings/nodejs run test:node
 ```
@@ -158,7 +174,7 @@ To narrow integration coverage to one configured database section, set `DATABASE
 
 ```bash
 DATABASE_ZIG_TEST_SECTION=postgres cargo test --manifest-path bindings/rust/Cargo.toml --test test_postgres -- --nocapture
-DATABASE_ZIG_TEST_SECTION=starrocks python -m unittest tests.python.test_starrocks
+DATABASE_ZIG_TEST_SECTION=starrocks python -m unittest discover -s tests/python -p 'test_starrocks.py'
 ```
 
 ## Recommended Next Steps

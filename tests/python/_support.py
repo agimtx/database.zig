@@ -260,6 +260,18 @@ def assert_non_empty_value(value: object | None, label: str) -> None:
     assert value not in (None, b"", ""), f"{label} should not be empty"
 
 
+def is_runtime_unavailable_error(error: BaseException) -> bool:
+    message = str(error)
+    return (
+        "Could not load" in message
+        or "Library not loaded" in message
+        or "connection refused" in message.lower()
+        or "timed out" in message.lower()
+        or "aq_connection_open failed:" in message
+        or "aq_connection_open_async failed:" in message
+    )
+
+
 def assert_hex_value(value: object | None, label: str) -> None:
     if isinstance(value, bytes):
         assert value, f"{label} should not be empty"

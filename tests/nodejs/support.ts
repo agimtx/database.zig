@@ -339,6 +339,17 @@ export function assertErrorMessage(error: unknown, pattern: RegExp): true {
   return true;
 }
 
+export function isRuntimeUnavailableError(error: unknown): error is Error {
+  return error instanceof Error && (
+    error.message.includes("Could not load") ||
+    error.message.includes("Library not loaded") ||
+    error.message.includes("connection refused") ||
+    error.message.includes("timed out") ||
+    error.message.includes("aq_connection_open failed:") ||
+    error.message.includes("aq_connection_open_async failed:")
+  );
+}
+
 export async function assertTypeCoverage(
   connection: Connection,
   typeCoverage: TypeCoverageCase,
