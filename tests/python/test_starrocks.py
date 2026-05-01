@@ -191,6 +191,8 @@ class StarRocksBindingIntegrationTest(unittest.IsolatedAsyncioTestCase):
                     tables_result = await database_connection.get_tables_async(database=database_name)
                     try:
                         self.assertIn(table_name, read_result_set_values(tables_result, 2))
+                        catalog_names = read_result_set_values(tables_result, 0)
+                        self.assertTrue(any(name not in (None, "") for name in catalog_names))
                         assert_table_qualified_name(tables_result, find_result_set_row_index(tables_result, 2, table_name))
                     finally:
                         await tables_result.close_async()

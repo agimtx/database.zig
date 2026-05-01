@@ -216,6 +216,9 @@ async function runStarRocksLifecycleTest(): Promise<void> {
         const tablesResult = await databaseConnection.getTables(null, databaseName);
         try {
           assert.ok(readResultSetValues(tablesResult, 2).includes(tableName));
+          assert.ok(
+            readResultSetValues(tablesResult, 0).some((catalogName) => catalogName !== null && catalogName !== ""),
+          );
           assertTableQualifiedName(tablesResult, findResultSetRowIndex(tablesResult, 2, tableName));
         } finally {
           await tablesResult.close();

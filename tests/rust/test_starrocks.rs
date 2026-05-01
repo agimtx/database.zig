@@ -89,6 +89,11 @@ fn rust_binding_starrocks_lifecycle() {
             let tables_result = database_connection.get_tables(None, Some(&database_name))?;
             let table_names = read_values(&tables_result, 2)?;
             assert!(table_names.contains(&Value::Text(table_name.clone())));
+            let catalog_names = read_values(&tables_result, 0)?;
+            assert!(catalog_names.iter().any(|value| match value {
+                Value::Text(text) => !text.is_empty(),
+                _ => false,
+            }));
             let table_row = find_row_index(&tables_result, 2, &Value::Text(table_name.clone()))?;
             assert_table_qualified_name(&tables_result, table_row)?;
             tables_result.close()?;
