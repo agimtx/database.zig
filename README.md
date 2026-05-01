@@ -108,10 +108,12 @@ python -m unittest discover -s tests/python -p 'test_*.py'
 npm --prefix bindings/nodejs install
 npm --prefix bindings/nodejs run typecheck:tests
 npm --prefix bindings/nodejs run test:node
-cargo test --manifest-path bindings/rust/Cargo.toml
+cargo test --manifest-path bindings/rust/Cargo.toml --tests
 ```
 
 `zig build shared` should run before the language binding suites so Python, Node.js, and Rust can load `zig-out/lib/libaq_database.*`.
+
+Note: this repository does not have a top-level `Cargo.toml`; the Rust bindings are under `bindings/rust`, so use `--manifest-path bindings/rust/Cargo.toml` for Rust tests.
 
 ### Zig Core Unit Tests
 
@@ -167,7 +169,7 @@ Run all Rust binding tests:
 
 ```bash
 zig build shared
-cargo test --manifest-path bindings/rust/Cargo.toml
+cargo test --manifest-path bindings/rust/Cargo.toml --tests
 ```
 
 To narrow integration coverage to one configured database section, set `DATABASE_ZIG_TEST_SECTION`, for example:
