@@ -7,57 +7,58 @@ from decimal import Decimal
 from _support import ConnectionManager, ColumnType, QualifiedNamePartRole, assert_boolean_value, assert_column_metadata, assert_namespace_access, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, is_runtime_unavailable_error, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
 
-STARROCKS_ADDITIONAL_TYPES_SQL = (
-    "select "
-    "cast(1 as tinyint) as tiny_value, "
-    "cast(2 as smallint) as small_value, "
-    "cast(3 as int) as int_value, "
-    "cast(4 as bigint) as big_value, "
-    "cast(5.5 as float) as float_value, "
-    "cast(6.5 as double) as double_value, "
-    "cast('[1,2,3]' as array<int>) as array_value, "
-    "map('a',1,'b',2) as map_value, "
-    "row(1, 'alpha') as struct_value"
-)
+STARROCKS_ADDITIONAL_TYPES_SQL = """\
+select
+    cast(1 as tinyint) as tiny_value,
+    cast(2 as smallint) as small_value,
+    cast(3 as int) as int_value,
+    cast(4 as bigint) as big_value,
+    cast(5.5 as float) as float_value,
+    cast(6.5 as double) as double_value,
+    cast('[1,2,3]' as array<int>) as array_value,
+    map('a',1,'b',2) as map_value,
+    row(1, 'alpha') as struct_value
+"""
 
-STARROCKS_SKETCH_TYPES_SQL = (
-    "select "
-    "to_bitmap(42) as bitmap_value, "
-    "hll_hash('alpha') as hll_value, "
-    "percentile_hash(42) as percentile_value"
-)
+STARROCKS_SKETCH_TYPES_SQL = """\
+select
+    to_bitmap(42) as bitmap_value,
+    hll_hash('alpha') as hll_value,
+    percentile_hash(42) as percentile_value
+"""
 
 
 def build_starrocks_type_coverage_case(table_name: str) -> dict[str, object]:
     return {
         "metadata_database": None,
-        "create_table_sql": (
-            f"create table {table_name} ("
-            "id bigint not null, "
-            "bool_value boolean not null, "
-            "int_value bigint not null, "
-            "float_value double not null, "
-            "text_value string not null, "
-            "fixed_text_value char(5) not null, "
-            "decimal_value decimal(10, 2) not null, "
-            "date_value date not null, "
-            "timestamp_value datetime not null, "
-            "largeint_value largeint not null, "
-            "json_value json not null"
-            ") duplicate key(id) distributed by hash(id) buckets 1 "
-            'properties ("replication_num" = "1")'
-        ),
-        "insert_sql": (
-            f"insert into {table_name} ("
-            "id, bool_value, int_value, float_value, text_value, fixed_text_value, decimal_value, date_value, timestamp_value, largeint_value, json_value"
-            ") values ("
-            "1, true, 42, 3.5, 'alpha', 'omega', 123.45, '2024-01-02', '2024-01-02 03:04:05', 123456789012345678901234567890, parse_json('{\"enabled\": true, \"count\": 1}')"
-            ")"
-        ),
-        "select_sql": (
-            f"select id, bool_value, int_value, float_value, text_value, fixed_text_value, "
-            f"decimal_value, date_value, timestamp_value, largeint_value, json_value from {table_name} order by id"
-        ),
+        "create_table_sql": f"""\
+create table {table_name} (
+    id bigint not null,
+    bool_value boolean not null,
+    int_value bigint not null,
+    float_value double not null,
+    text_value string not null,
+    fixed_text_value char(5) not null,
+    decimal_value decimal(10, 2) not null,
+    date_value date not null,
+    timestamp_value datetime not null,
+    largeint_value largeint not null,
+    json_value json not null
+) duplicate key(id) distributed by hash(id) buckets 1
+properties ("replication_num" = "1")""",
+        "insert_sql": f"""\
+insert into {table_name} (
+    id, bool_value, int_value, float_value, text_value, fixed_text_value, decimal_value, date_value,
+    timestamp_value, largeint_value, json_value
+) values (
+    1, true, 42, 3.5, 'alpha', 'omega', 123.45, '2024-01-02', '2024-01-02 03:04:05',
+    123456789012345678901234567890, parse_json('{"enabled": true, "count": 1}')
+)""",
+        "select_sql": f"""\
+select id, bool_value, int_value, float_value, text_value, fixed_text_value,
+    decimal_value, date_value, timestamp_value, largeint_value, json_value
+from {table_name}
+order by id""",
         "expected_columns": [
             {"name": "id", "column_type": ColumnType.INT64},
             {"name": "bool_value", "column_type": [ColumnType.BOOLEAN, ColumnType.INT8]},

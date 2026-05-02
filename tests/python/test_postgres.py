@@ -8,68 +8,73 @@ from decimal import Decimal
 from _support import ConnectionManager, ColumnType, QualifiedNamePartRole, assert_boolean_value, assert_column_metadata, assert_hex_value, assert_namespace_access, assert_non_empty_value, assert_table_qualified_name, assert_type_coverage, execute_non_query, find_result_set_row_index, is_runtime_unavailable_error, load_test_target, read_result_set_values, should_run_section, unique_identifier
 
 
-POSTGRES_ADDITIONAL_TYPES_SQL = (
-    "select "
-    "cast(12.34 as money) as money_value, "
-    "cast(B'1010' as bit(4)) as bit_value, "
-    "cast(B'101011' as varbit) as varbit_value, "
-    "'10.0.0.0/24'::cidr as cidr_value, "
-    "'08:00:2b:01:02:03'::macaddr as macaddr_value, "
-    "'08:00:2b:01:02:03:04:05'::macaddr8 as macaddr8_value, "
-    "to_tsvector('english', 'hello world') as tsv_value, "
-    "to_tsquery('english', 'hello & world') as tsq_value, "
-    "point(1,2) as point_value, "
-    "box(point(0,0), point(1,1)) as box_value, "
-    "'int4'::regtype as regtype_value, "
-    "time with time zone '03:04:05+02' as timetz_value, "
-    "timestamptz '2024-01-02 03:04:05+02' as timestamptz_value"
-)
+POSTGRES_ADDITIONAL_TYPES_SQL = """\
+select
+    cast(12.34 as money) as money_value,
+    cast(B'1010' as bit(4)) as bit_value,
+    cast(B'101011' as varbit) as varbit_value,
+    '10.0.0.0/24'::cidr as cidr_value,
+    '08:00:2b:01:02:03'::macaddr as macaddr_value,
+    '08:00:2b:01:02:03:04:05'::macaddr8 as macaddr8_value,
+    to_tsvector('english', 'hello world') as tsv_value,
+    to_tsquery('english', 'hello & world') as tsq_value,
+    point(1,2) as point_value,
+    box(point(0,0), point(1,1)) as box_value,
+    'int4'::regtype as regtype_value,
+    time with time zone '03:04:05+02' as timetz_value,
+    timestamptz '2024-01-02 03:04:05+02' as timestamptz_value
+"""
 
-POSTGRES_RANGE_AND_SYSTEM_TYPES_SQL = (
-    "select "
-    "int4range(1,5) as range_value, "
-    "int4multirange(int4range(1,5), int4range(7,9)) as multirange_value, "
-    "42::oid as oid_value, "
-    "'pg_type'::regclass as regclass_value, "
-    "'(1,2)'::tid as tid_value, "
-    "'0/16B6C50'::pg_lsn as lsn_value"
-)
+POSTGRES_RANGE_AND_SYSTEM_TYPES_SQL = """\
+select
+    int4range(1,5) as range_value,
+    int4multirange(int4range(1,5), int4range(7,9)) as multirange_value,
+    42::oid as oid_value,
+    'pg_type'::regclass as regclass_value,
+    '(1,2)'::tid as tid_value,
+    '0/16B6C50'::pg_lsn as lsn_value
+"""
 
 
 def build_postgres_type_coverage_case(table_name: str) -> dict[str, object]:
     return {
         "metadata_database": "public",
-        "create_table_sql": (
-            f"create table {table_name} ("
-            "id bigint primary key, "
-            "bool_value boolean not null, "
-            "int_value bigint not null, "
-            "float_value double precision not null, "
-            "text_value text not null, "
-            "binary_value bytea not null, "
-            "decimal_value numeric(10, 2) not null, "
-            "date_value date not null, "
-            "time_value time not null, "
-            "interval_value interval not null, "
-            "uuid_value uuid not null, "
-            "xml_value xml not null, "
-            "array_value integer[] not null, "
-            "inet_value inet not null, "
-            "timestamp_value timestamp not null, "
-            "json_value jsonb not null"
-            ")"
-        ),
-        "insert_sql": (
-            f"insert into {table_name} ("
-            "id, bool_value, int_value, float_value, text_value, binary_value, decimal_value, date_value, time_value, interval_value, uuid_value, xml_value, array_value, inet_value, timestamp_value, json_value"
-            ") values ("
-            "1, true, 42, 3.5, 'alpha', decode('0102ff', 'hex'), 123.45, date '2024-01-02', time '03:04:05', interval '1 day 2 seconds', '550e8400-e29b-41d4-a716-446655440000'::uuid, xmlparse(document '<a>1</a>'), array[1,2,3], inet '127.0.0.1', timestamp '2024-01-02 03:04:05', '{\"enabled\":true,\"count\":1}'::jsonb"
-            ")"
-        ),
-        "select_sql": (
-            f"select id, bool_value, int_value, float_value, text_value, binary_value, "
-            f"decimal_value, date_value, time_value, interval_value, uuid_value, xml_value, array_value, inet_value, timestamp_value, json_value from {table_name} order by id"
-        ),
+        "create_table_sql": f"""\
+create table {table_name} (
+    id bigint primary key,
+    bool_value boolean not null,
+    int_value bigint not null,
+    float_value double precision not null,
+    text_value text not null,
+    binary_value bytea not null,
+    decimal_value numeric(10, 2) not null,
+    date_value date not null,
+    time_value time not null,
+    interval_value interval not null,
+    uuid_value uuid not null,
+    xml_value xml not null,
+    array_value integer[] not null,
+    inet_value inet not null,
+    timestamp_value timestamp not null,
+    json_value jsonb not null
+)""",
+        "insert_sql": f"""\
+insert into {table_name} (
+    id, bool_value, int_value, float_value, text_value, binary_value, decimal_value, date_value,
+    time_value, interval_value, uuid_value, xml_value, array_value, inet_value, timestamp_value,
+    json_value
+) values (
+    1, true, 42, 3.5, 'alpha', decode('0102ff', 'hex'), 123.45, date '2024-01-02',
+    time '03:04:05', interval '1 day 2 seconds', '550e8400-e29b-41d4-a716-446655440000'::uuid,
+    xmlparse(document '<a>1</a>'), array[1,2,3], inet '127.0.0.1',
+    timestamp '2024-01-02 03:04:05', '{"enabled":true,"count":1}'::jsonb
+)""",
+        "select_sql": f"""\
+select id, bool_value, int_value, float_value, text_value, binary_value,
+    decimal_value, date_value, time_value, interval_value, uuid_value, xml_value, array_value,
+    inet_value, timestamp_value, json_value
+from {table_name}
+order by id""",
         "expected_columns": [
             {"name": "id", "column_type": ColumnType.INT64},
             {"name": "bool_value", "column_type": ColumnType.BOOLEAN},
