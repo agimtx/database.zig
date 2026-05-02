@@ -10,6 +10,7 @@ This directory contains binding-level tests for the Python, Node.js, and Rust wr
 - Use `DATABASE_ZIG_TEST_SECTION` to run only one database-specific test file.
 - Use `DATABASE_ZIG_TEST_ENV_FILE` to override the config file path.
 - For Flight SQL-backed PostgreSQL tests, prefer an explicit `dsn=` entry in `[postgres_flightsql]` when the server needs parameters beyond a plain `flightsql://host:port/database` URI.
+- Structured configs may also describe semicolon-separated ADBC option strings by combining fields such as `driver=`, `entrypoint=`, `uri=`, `additional_manifest_search_path_list=`, or driver-specific keys like `path=`.
 
 Example template:
 
@@ -25,6 +26,11 @@ dsn=flightsql://user:password@127.0.0.1:8815/postgres?useEncryption=false
 # database=postgres
 # user=postgres
 # password=secret
+
+# Structured option-string form is also supported:
+# driver=/absolute/path/to/libadbc_driver_postgresql.dylib
+# entrypoint=AdbcDriverInit
+# uri=postgresql://user:password@127.0.0.1:5432/postgres
 ```
 
 ## Run All Binding Tests

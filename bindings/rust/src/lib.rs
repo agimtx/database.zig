@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::cell::Cell;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::fmt;
@@ -182,6 +183,209 @@ pub struct NamespaceAccess {
     pub has_namespace_access: bool,
     pub namespace_role: QualifiedNamePartRole,
     pub qualified_name: QualifiedName,
+}
+
+const DSN_URI_FIELD_NAMES: &[&str] = &["scheme", "host", "port", "user", "password", "database"];
+const DSN_OPTION_FIELD_ORDER: &[&str] = &["driver", "entrypoint", "additional_manifest_search_path_list"];
+
+pub fn build_dsn(
+    section: &str,
+    config: &HashMap<String, String>,
+    database_override: Option<&str>,
+) -> String {
+    if let Some(explicit_dsn) = config.get("dsn") {
+        if database_override.is_none() {
+            return explicit_dsn.clone();
+        }
+    }
+
+    if should_build_option_string_dsn(config) {
+        return build_option_string_dsn(section, config, database_override);
+    }
+
+    build_uri_dsn(section, config, database_override)
+}
+
+fn should_build_option_string_dsn(config: &HashMap<String, String>) -> bool {
+    config.contains_key("uri") || DSN_OPTION_FIELD_ORDER.iter().any(|key| config.contains_key(*key))
+}
+
+fn build_option_string_dsn(
+    section: &str,
+    config: &HashMap<String, String>,
+    database_override: Option<&str>,
+) -> String {
+    let mut parts = Vec::new();
+
+    for key in DSN_OPTION_FIELD_ORDER {
+        if let Some(value) = config.get(*key) {
+            parts.push(format!("{key}={value}"));
+        }
+    }
+
+    if config.contains_key("uri") || has_uri_components(config) {
+        parts.push(format!("uri={}", build_uri_dsn(section, config, database_override)));
+    } else {
+        parts.extend(build_extra_option_pairs(config));
+    }
+
+    parts.join(";")
+}
+
+fn build_uri_dsn(
+    section: &str,
+    config: &HashMap<String, String>,
+    database_override: Option<&str>,
+) -> String {
+    if let Some(explicit_uri) = config.get("uri") {
+        return override_uri_database(explicit_uri, database_override);
+    }
+
+    let scheme = config
+        .get("scheme")
+        .cloned()
+        .unwrap_or_else(|| default_dsn_scheme(section));
+    let host = config
+        .get("host")
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1".to_owned());
+    let port = config.get("port").map(|value| format!(":{value}")).unwrap_or_default();
+    let username = config.get("user").cloned().unwrap_or_default();
+    let password = config.get("password").cloned();
+    let database = database_override
+        .map(ToOwned::to_owned)
+        .or_else(|| config.get("database").cloned())
+        .unwrap_or_else(|| default_dsn_database(section));
+
+    let credentials = if username.is_empty() {
+        String::new()
+    } else {
+        let mut credentials = percent_encode_dsn_part(&username);
+        if let Some(password) = password {
+            credentials.push(':');
+            credentials.push_str(&percent_encode_dsn_part(&password));
+        }
+        credentials.push('@');
+        credentials
+    };
+
+    let database_part = if database.is_empty() {
+        String::new()
+    } else {
+        format!("/{}", percent_encode_dsn_part(&database))
+    };
+
+    let mut dsn = format!("{scheme}://{credentials}{host}{port}{database_part}");
+    let query_pairs = build_uri_query_pairs(config);
+    if !query_pairs.is_empty() {
+        dsn.push('?');
+        dsn.push_str(
+            &query_pairs
+                .into_iter()
+                .map(|(key, value)| format!("{}={}", percent_encode_dsn_part(&key), percent_encode_dsn_part(&value)))
+                .collect::<Vec<_>>()
+                .join("&"),
+        );
+    }
+
+    dsn
+}
+
+fn has_uri_components(config: &HashMap<String, String>) -> bool {
+    DSN_URI_FIELD_NAMES.iter().any(|key| config.contains_key(*key))
+}
+
+fn build_uri_query_pairs(config: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut pairs = config
+        .iter()
+        .filter(|(key, _)| !is_special_dsn_field(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    pairs.sort_by(|left, right| left.0.cmp(&right.0));
+    pairs
+}
+
+fn build_extra_option_pairs(config: &HashMap<String, String>) -> Vec<String> {
+    let mut pairs = config
+        .iter()
+        .filter(|(key, _)| !is_special_dsn_field(key))
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>();
+    pairs.sort();
+    pairs
+}
+
+fn is_special_dsn_field(key: &str) -> bool {
+    key == "dsn"
+        || key == "uri"
+        || DSN_URI_FIELD_NAMES.contains(&key)
+        || DSN_OPTION_FIELD_ORDER.contains(&key)
+}
+
+fn override_uri_database(uri: &str, database_override: Option<&str>) -> String {
+    let Some(database_override) = database_override else {
+        return uri.to_owned();
+    };
+
+    let Some((scheme, remainder)) = uri.split_once("://") else {
+        return uri.to_owned();
+    };
+
+    let (without_fragment, fragment) = match remainder.split_once('#') {
+        Some((value, current_fragment)) => (value, Some(current_fragment)),
+        None => (remainder, None),
+    };
+    let (without_query, query) = match without_fragment.split_once('?') {
+        Some((value, current_query)) => (value, Some(current_query)),
+        None => (without_fragment, None),
+    };
+    let authority_end = without_query.find('/').unwrap_or(without_query.len());
+    let authority = &without_query[..authority_end];
+
+    let mut result = format!("{scheme}://{authority}");
+    if !database_override.is_empty() {
+        result.push('/');
+        result.push_str(&percent_encode_dsn_part(database_override));
+    }
+    if let Some(query) = query {
+        result.push('?');
+        result.push_str(query);
+    }
+    if let Some(fragment) = fragment {
+        result.push('#');
+        result.push_str(fragment);
+    }
+
+    result
+}
+
+fn default_dsn_scheme(section: &str) -> String {
+    match section.to_ascii_lowercase().as_str() {
+        "postgres" | "postgresql" => "postgresql".to_owned(),
+        "starrocks" | "mysql" | "singlestore" => "mysql".to_owned(),
+        _ => section.to_ascii_lowercase(),
+    }
+}
+
+fn default_dsn_database(section: &str) -> String {
+    match section.to_ascii_lowercase().as_str() {
+        "postgres" | "postgresql" => "postgres".to_owned(),
+        "starrocks" | "mysql" | "singlestore" => "information_schema".to_owned(),
+        _ => String::new(),
+    }
+}
+
+fn percent_encode_dsn_part(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1284,7 +1488,9 @@ mod windows {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_value, ColumnType, Value};
+    use std::collections::HashMap;
+
+    use super::{build_dsn, decode_value, ColumnType, Value};
 
     #[test]
     fn converts_boolean_values() {
@@ -1314,5 +1520,54 @@ mod tests {
             Value::Text("2024-01-02T03:04:05".to_owned())
         );
         assert_eq!(decode_value(None, ColumnType::Text), Value::Null);
+    }
+
+    #[test]
+    fn builds_uri_dsn_with_query_parameters() {
+        let config = HashMap::from([
+            ("host".to_owned(), "db.local".to_owned()),
+            ("port".to_owned(), "8815".to_owned()),
+            ("user".to_owned(), "alice".to_owned()),
+            ("password".to_owned(), "p@ss".to_owned()),
+            ("scheme".to_owned(), "flightsql".to_owned()),
+            ("database".to_owned(), "postgres".to_owned()),
+            ("useEncryption".to_owned(), "false".to_owned()),
+        ]);
+
+        assert_eq!(
+            build_dsn("postgres_flightsql", &config, None),
+            "flightsql://alice:p%40ss@db.local:8815/postgres?useEncryption=false"
+        );
+    }
+
+    #[test]
+    fn builds_option_string_dsn_with_nested_uri() {
+        let config = HashMap::from([
+            ("driver".to_owned(), "/tmp/libadbc_driver_postgresql.dylib".to_owned()),
+            ("entrypoint".to_owned(), "AdbcDriverInit".to_owned()),
+            ("scheme".to_owned(), "postgresql".to_owned()),
+            ("host".to_owned(), "db.local".to_owned()),
+            ("database".to_owned(), "app".to_owned()),
+            ("sslmode".to_owned(), "require".to_owned()),
+        ]);
+
+        assert_eq!(
+            build_dsn("postgres", &config, None),
+            "driver=/tmp/libadbc_driver_postgresql.dylib;entrypoint=AdbcDriverInit;uri=postgresql://db.local/app?sslmode=require"
+        );
+    }
+
+    #[test]
+    fn builds_pure_option_string_dsn_without_uri() {
+        let config = HashMap::from([
+            ("driver".to_owned(), "/tmp/libduckdb.dylib".to_owned()),
+            ("entrypoint".to_owned(), "duckdb_adbc_init".to_owned()),
+            ("path".to_owned(), "/tmp/test.duckdb".to_owned()),
+        ]);
+
+        assert_eq!(
+            build_dsn("duckdb", &config, None),
+            "driver=/tmp/libduckdb.dylib;entrypoint=duckdb_adbc_init;path=/tmp/test.duckdb"
+        );
     }
 }

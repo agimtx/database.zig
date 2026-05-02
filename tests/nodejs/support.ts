@@ -137,56 +137,9 @@ export function loadTarget(sectionName: string): LoadedTarget | SkippedTarget {
     section: resolvedSectionName,
     config: section,
     dsn(databaseOverride = undefined) {
-      return buildDsn(resolvedSectionName, section, databaseOverride);
+      return bindingModule.buildDsn(resolvedSectionName, section, databaseOverride);
     },
   };
-}
-
-function buildDsn(sectionName: string, config: SectionConfig, databaseOverride: string | undefined = undefined): string {
-  if (config.dsn && databaseOverride === undefined) {
-    return config.dsn;
-  }
-
-  const scheme = config.scheme || defaultScheme(sectionName);
-  const host = config.host || "127.0.0.1";
-  const port = config.port ? `:${config.port}` : "";
-  const username = config.user || "";
-  const password = Object.prototype.hasOwnProperty.call(config, "password") ? config.password : null;
-  const database = databaseOverride !== undefined ? databaseOverride : (config.database || defaultDatabase(sectionName));
-
-  let credentials = "";
-  if (username) {
-    credentials = encodeURIComponent(username);
-    if (password !== null) {
-      credentials += `:${encodeURIComponent(password)}`;
-    }
-    credentials += "@";
-  }
-
-  const databasePart = database ? `/${encodeURIComponent(database)}` : "";
-  return `${scheme}://${credentials}${host}${port}${databasePart}`;
-}
-
-function defaultScheme(sectionName: string): string {
-  const lowered = sectionName.toLowerCase();
-  if (lowered === "postgres" || lowered === "postgresql") {
-    return "postgresql";
-  }
-  if (lowered === "starrocks" || lowered === "mysql" || lowered === "singlestore") {
-    return "mysql";
-  }
-  return lowered;
-}
-
-function defaultDatabase(sectionName: string): string {
-  const lowered = sectionName.toLowerCase();
-  if (lowered === "postgres" || lowered === "postgresql") {
-    return "postgres";
-  }
-  if (lowered === "starrocks" || lowered === "mysql" || lowered === "singlestore") {
-    return "information_schema";
-  }
-  return "";
 }
 
 export function vendoredDriverPath(name: string): string {

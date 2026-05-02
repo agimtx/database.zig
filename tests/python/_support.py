@@ -27,6 +27,23 @@ ColumnType = _binding_module.ColumnType
 NamespaceAccess = _binding_module.NamespaceAccess
 QualifiedName = _binding_module.QualifiedName
 QualifiedNamePartRole = _binding_module.QualifiedNamePartRole
+build_dsn = _binding_module.build_dsn
+
+_DSN_RESERVED_KEYS = frozenset({
+    "dsn",
+    "uri",
+    "driver",
+    "entrypoint",
+    "additional_manifest_search_path_list",
+    "scheme",
+    "host",
+    "port",
+    "user",
+    "password",
+    "database",
+})
+_DSN_URI_KEYS = frozenset({"scheme", "host", "port", "user", "password", "database"})
+_DSN_OPTION_KEYS = frozenset({"uri", "driver", "entrypoint", "additional_manifest_search_path_list"})
 
 
 @dataclass(frozen=True)
@@ -36,7 +53,59 @@ class TestTarget:
     config: dict[str, str]
 
     def dsn(self, database_override: str | None = None) -> str:
-        return build_dsn(self.section, self.config, database_override)
+        scheme = self.config.get("scheme")
+        database = self.config.get("database")
+        if _should_apply_section_defaults(self.config):
+            if scheme is None:
+                scheme = _default_scheme(self.section)
+            if database is None and database_override is None:
+                database = _default_database(self.section)
+
+        extra_options = {
+            key: value for key, value in self.config.items() if key not in _DSN_RESERVED_KEYS
+        }
+        return build_dsn(
+            dsn=self.config.get("dsn"),
+            uri=self.config.get("uri"),
+            driver=self.config.get("driver"),
+            entrypoint=self.config.get("entrypoint"),
+            additional_manifest_search_path_list=self.config.get("additional_manifest_search_path_list"),
+            scheme=scheme,
+            host=self.config.get("host"),
+            port=self.config.get("port"),
+            user=self.config.get("user"),
+            password=self.config.get("password"),
+            database=database,
+            extra_options=extra_options or None,
+            database_override=database_override,
+        )
+
+
+def _should_apply_section_defaults(config: dict[str, str]) -> bool:
+    if config.get("dsn") is not None or config.get("uri") is not None:
+        return False
+
+    has_uri_components = any(config.get(key) is not None for key in _DSN_URI_KEYS)
+    has_option_string_keys = any(config.get(key) is not None for key in _DSN_OPTION_KEYS - {"uri"})
+    return has_uri_components or not has_option_string_keys
+
+
+def _default_scheme(section: str) -> str:
+    lowered = section.lower()
+    if lowered in {"postgres", "postgresql"}:
+        return "postgresql"
+    if lowered in {"starrocks", "mysql", "singlestore"}:
+        return "mysql"
+    return lowered
+
+
+def _default_database(section: str) -> str:
+    lowered = section.lower()
+    if lowered in {"postgres", "postgresql"}:
+        return "postgres"
+    if lowered in {"starrocks", "mysql", "singlestore"}:
+        return "information_schema"
+    return ""
 
 
 def load_test_target(section: str) -> TestTarget:
@@ -69,60 +138,6 @@ def resolve_section_name(parser: configparser.ConfigParser, section: str) -> str
 def should_run_section(section: str) -> bool:
     requested = os.getenv("DATABASE_ZIG_TEST_SECTION")
     return requested is None or requested.lower() == section.lower()
-
-
-def build_dsn(section: str, config: dict[str, str], database_override: str | None = None) -> str:
-    explicit_dsn = config.get("dsn")
-    if explicit_dsn and database_override is None:
-        return explicit_dsn
-
-    scheme = config.get("scheme") or default_scheme(section)
-    host = config.get("host", "127.0.0.1")
-    port = config.get("port")
-    username = config.get("user", "")
-    password = config.get("password")
-    database = database_override if database_override is not None else (config.get("database") or default_database(section))
-
-    credentials = ""
-    if username:
-        credentials = escape_uri_part(username)
-        if password is not None:
-            credentials += f":{escape_uri_part(password)}"
-        credentials += "@"
-
-    port_part = f":{port}" if port else ""
-    database_part = f"/{escape_path_part(database)}" if database else ""
-    return f"{scheme}://{credentials}{host}{port_part}{database_part}"
-
-
-def default_scheme(section: str) -> str:
-    lowered = section.lower()
-    if lowered in {"postgres", "postgresql"}:
-        return "postgresql"
-    if lowered in {"starrocks", "mysql", "singlestore"}:
-        return "mysql"
-    return lowered
-
-
-def default_database(section: str) -> str:
-    lowered = section.lower()
-    if lowered in {"postgres", "postgresql"}:
-        return "postgres"
-    if lowered in {"starrocks", "mysql", "singlestore"}:
-        return "information_schema"
-    return ""
-
-
-def escape_uri_part(value: str) -> str:
-    from urllib.parse import quote
-
-    return quote(value, safe="")
-
-
-def escape_path_part(value: str) -> str:
-    from urllib.parse import quote
-
-    return quote(value, safe="")
 
 
 def repo_tmp_dir(*parts: str) -> Path:

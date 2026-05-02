@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use aq_database::{ColumnMetadata, ColumnType, ConnectionManager, DriverKind, Error, NamespaceAccess, QualifiedNamePartRole, Value};
+use aq_database::{build_dsn, ColumnMetadata, ColumnType, ConnectionManager, DriverKind, Error, NamespaceAccess, QualifiedNamePartRole, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -355,77 +355,4 @@ fn resolve_section_name(
     }
 
     None
-}
-
-fn build_dsn(section: &str, config: &HashMap<String, String>, database_override: Option<&str>) -> String {
-    if let Some(explicit_dsn) = config.get("dsn") {
-        if database_override.is_none() {
-            return explicit_dsn.clone();
-        }
-    }
-
-    let scheme = config
-        .get("scheme")
-        .cloned()
-        .unwrap_or_else(|| default_scheme(section).to_owned());
-    let host = config
-        .get("host")
-        .cloned()
-        .unwrap_or_else(|| "127.0.0.1".to_owned());
-    let port = config.get("port").map(|value| format!(":{value}")).unwrap_or_default();
-    let username = config.get("user").cloned().unwrap_or_default();
-    let password = config.get("password").cloned();
-    let database = database_override
-        .map(ToOwned::to_owned)
-        .or_else(|| config.get("database").cloned())
-        .unwrap_or_else(|| default_database(section).to_owned());
-
-    let credentials = if username.is_empty() {
-        String::new()
-    } else {
-        let mut credentials = percent_encode(&username);
-        if let Some(password) = password {
-            credentials.push(':');
-            credentials.push_str(&percent_encode(&password));
-        }
-        credentials.push('@');
-        credentials
-    };
-
-    let database_part = if database.is_empty() {
-        String::new()
-    } else {
-        format!("/{}", percent_encode(&database))
-    };
-
-    format!("{scheme}://{credentials}{host}{port}{database_part}")
-}
-
-fn default_scheme(section: &str) -> String {
-    match section.to_ascii_lowercase().as_str() {
-        "postgres" | "postgresql" => "postgresql".to_owned(),
-        "starrocks" | "mysql" | "singlestore" => "mysql".to_owned(),
-        _ => section.to_owned(),
-    }
-}
-
-fn default_database(section: &str) -> String {
-    match section.to_ascii_lowercase().as_str() {
-        "postgres" | "postgresql" => "postgres".to_owned(),
-        "starrocks" | "mysql" | "singlestore" => "information_schema".to_owned(),
-        _ => String::new(),
-    }
-}
-
-fn percent_encode(value: &str) -> String {
-    let mut encoded = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char)
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import asyncio
 import ctypes
 import datetime as dt
@@ -12,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 
 _DRIVER_MAP = {
@@ -168,6 +170,203 @@ class NamespaceAccess:
 
 
 ResultValue = bool | int | float | str | bytes | Decimal | dt.date | dt.time | dt.datetime | uuid.UUID | list[Any] | dict[str, Any]
+
+
+_DSN_URI_FIELD_NAMES = frozenset({"scheme", "host", "port", "user", "password", "database"})
+_DSN_OPTION_FIELD_ORDER = ("driver", "entrypoint", "additional_manifest_search_path_list")
+
+
+def build_dsn(
+    *,
+    dsn: str | None = None,
+    uri: str | None = None,
+    driver: str | None = None,
+    entrypoint: str | None = None,
+    additional_manifest_search_path_list: str | None = None,
+    scheme: str | None = None,
+    host: str | None = None,
+    port: str | None = None,
+    user: str | None = None,
+    password: str | None = None,
+    database: str | None = None,
+    extra_options: Mapping[str, str] | None = None,
+    database_override: str | None = None,
+) -> str:
+    explicit_dsn = dsn
+    if explicit_dsn and database_override is None:
+        return explicit_dsn
+
+    resolved_extra_options = dict(extra_options or {})
+
+    if _should_build_option_string_dsn(uri=uri, driver=driver, entrypoint=entrypoint, additional_manifest_search_path_list=additional_manifest_search_path_list):
+        return _build_option_string_dsn(
+            uri=uri,
+            driver=driver,
+            entrypoint=entrypoint,
+            additional_manifest_search_path_list=additional_manifest_search_path_list,
+            scheme=scheme,
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database,
+            extra_options=resolved_extra_options,
+            database_override=database_override,
+        )
+
+    return _build_uri_dsn(
+        uri=uri,
+        scheme=scheme,
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+        extra_options=resolved_extra_options,
+        database_override=database_override,
+    )
+
+
+def _should_build_option_string_dsn(
+    *,
+    uri: str | None,
+    driver: str | None,
+    entrypoint: str | None,
+    additional_manifest_search_path_list: str | None,
+) -> bool:
+    return uri is not None or any(
+        value is not None for value in (driver, entrypoint, additional_manifest_search_path_list)
+    )
+
+
+def _build_option_string_dsn(
+    *,
+    uri: str | None,
+    driver: str | None,
+    entrypoint: str | None,
+    additional_manifest_search_path_list: str | None,
+    scheme: str | None,
+    host: str | None,
+    port: str | None,
+    user: str | None,
+    password: str | None,
+    database: str | None,
+    extra_options: Mapping[str, str],
+    database_override: str | None,
+) -> str:
+    parts: list[str] = []
+    for key, value in (
+        ("driver", driver),
+        ("entrypoint", entrypoint),
+        ("additional_manifest_search_path_list", additional_manifest_search_path_list),
+    ):
+        if value is not None:
+            parts.append(f"{key}={value}")
+
+    if uri is not None or _has_uri_components(
+        scheme=scheme,
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+    ):
+        parts.append(
+            "uri="
+            + _build_uri_dsn(
+                uri=uri,
+                scheme=scheme,
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                database=database,
+                extra_options=extra_options,
+                database_override=database_override,
+            )
+        )
+    else:
+        parts.extend(_build_extra_option_pairs(extra_options))
+
+    return ";".join(parts)
+
+
+def _build_uri_dsn(
+    *,
+    uri: str | None,
+    scheme: str | None,
+    host: str | None,
+    port: str | None,
+    user: str | None,
+    password: str | None,
+    database: str | None,
+    extra_options: Mapping[str, str],
+    database_override: str | None,
+) -> str:
+    explicit_uri = uri
+    if explicit_uri is not None:
+        return _override_uri_database(explicit_uri, database_override)
+
+    if scheme is None:
+        raise ValueError("scheme is required when dsn and uri are not provided")
+
+    resolved_scheme = scheme
+    resolved_host = host or "127.0.0.1"
+    resolved_port = port
+    username = user or ""
+    resolved_password = password
+    resolved_database = database_override if database_override is not None else database
+
+    credentials = ""
+    if username:
+        credentials = quote(username, safe="")
+        if resolved_password is not None:
+            credentials += f":{quote(resolved_password, safe='')}"
+        credentials += "@"
+
+    port_part = f":{resolved_port}" if resolved_port else ""
+    database_part = f"/{quote(resolved_database, safe='')}" if resolved_database else ""
+    dsn = f"{resolved_scheme}://{credentials}{resolved_host}{port_part}{database_part}"
+    query_pairs = _build_uri_query_pairs(extra_options)
+    if query_pairs:
+        dsn += "?" + "&".join(
+            f"{quote(key, safe='')}={quote(value, safe='')}" for key, value in query_pairs
+        )
+    return dsn
+
+
+def _has_uri_components(
+    *,
+    scheme: str | None,
+    host: str | None,
+    port: str | None,
+    user: str | None,
+    password: str | None,
+    database: str | None,
+) -> bool:
+    return any(value is not None for value in (scheme, host, port, user, password, database))
+
+
+def _build_uri_query_pairs(extra_options: Mapping[str, str]) -> list[tuple[str, str]]:
+    return sorted(extra_options.items())
+
+
+def _build_extra_option_pairs(extra_options: Mapping[str, str]) -> list[str]:
+    return [f"{key}={value}" for key, value in sorted(extra_options.items())]
+
+
+def _override_uri_database(uri: str, database_override: str | None) -> str:
+    if database_override is None:
+        return uri
+
+    from urllib.parse import SplitResult, urlsplit, urlunsplit
+
+    parsed = urlsplit(uri)
+    if not parsed.scheme:
+        return uri
+
+    path = f"/{quote(database_override, safe='')}" if database_override else ""
+    return urlunsplit(SplitResult(parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
 def _format_qualified_name_parts(parts: tuple[QualifiedNamePart, ...] | list[QualifiedNamePart]) -> str:

@@ -259,6 +259,128 @@ function formatQualifiedNameParts(parts) {
   return parts.filter((part) => part.value.length !== 0).map((part) => part.value).join(".");
 }
 
+const DSN_URI_FIELD_NAMES = new Set(["scheme", "host", "port", "user", "password", "database"]);
+const DSN_OPTION_FIELD_ORDER = ["driver", "entrypoint", "additional_manifest_search_path_list"];
+const DSN_SPECIAL_FIELD_NAMES = new Set(["dsn", "uri", ...DSN_URI_FIELD_NAMES, ...DSN_OPTION_FIELD_ORDER]);
+
+function buildDsn(sectionName, config, databaseOverride = undefined) {
+  if (config.dsn && databaseOverride === undefined) {
+    return config.dsn;
+  }
+
+  if (shouldBuildOptionStringDsn(config)) {
+    return buildOptionStringDsn(sectionName, config, databaseOverride);
+  }
+
+  return buildUriDsn(sectionName, config, databaseOverride);
+}
+
+function shouldBuildOptionStringDsn(config) {
+  return Object.prototype.hasOwnProperty.call(config, "uri")
+    || DSN_OPTION_FIELD_ORDER.some((key) => Object.prototype.hasOwnProperty.call(config, key));
+}
+
+function buildOptionStringDsn(sectionName, config, databaseOverride) {
+  const parts = [];
+
+  for (const key of DSN_OPTION_FIELD_ORDER) {
+    if (Object.prototype.hasOwnProperty.call(config, key)) {
+      parts.push(`${key}=${config[key]}`);
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(config, "uri") || hasUriComponents(config)) {
+    parts.push(`uri=${buildUriDsn(sectionName, config, databaseOverride)}`);
+  } else {
+    parts.push(...buildExtraOptionPairs(config));
+  }
+
+  return parts.join(";");
+}
+
+function buildUriDsn(sectionName, config, databaseOverride) {
+  if (Object.prototype.hasOwnProperty.call(config, "uri")) {
+    return overrideUriDatabase(config.uri, databaseOverride);
+  }
+
+  const scheme = config.scheme || defaultDsnScheme(sectionName);
+  const host = config.host || "127.0.0.1";
+  const port = config.port ? `:${config.port}` : "";
+  const username = config.user || "";
+  const password = Object.prototype.hasOwnProperty.call(config, "password") ? config.password : null;
+  const database = databaseOverride !== undefined ? databaseOverride : (config.database || defaultDsnDatabase(sectionName));
+
+  let credentials = "";
+  if (username) {
+    credentials = encodeURIComponent(username);
+    if (password !== null) {
+      credentials += `:${encodeURIComponent(password)}`;
+    }
+    credentials += "@";
+  }
+
+  const databasePart = database ? `/${encodeURIComponent(database)}` : "";
+  let dsn = `${scheme}://${credentials}${host}${port}${databasePart}`;
+  const queryPairs = buildUriQueryPairs(config);
+  if (queryPairs.length > 0) {
+    dsn += `?${queryPairs.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&")}`;
+  }
+  return dsn;
+}
+
+function hasUriComponents(config) {
+  return [...DSN_URI_FIELD_NAMES].some((key) => Object.prototype.hasOwnProperty.call(config, key));
+}
+
+function buildUriQueryPairs(config) {
+  return Object.entries(config)
+    .filter(([key]) => !DSN_SPECIAL_FIELD_NAMES.has(key))
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function buildExtraOptionPairs(config) {
+  return Object.entries(config)
+    .filter(([key]) => !DSN_SPECIAL_FIELD_NAMES.has(key))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`);
+}
+
+function overrideUriDatabase(uri, databaseOverride) {
+  if (databaseOverride === undefined) {
+    return uri;
+  }
+
+  try {
+    const parsed = new URL(uri);
+    parsed.pathname = databaseOverride ? `/${encodeURIComponent(databaseOverride)}` : "";
+    return parsed.toString();
+  } catch {
+    return uri;
+  }
+}
+
+function defaultDsnScheme(sectionName) {
+  const lowered = sectionName.toLowerCase();
+  if (lowered === "postgres" || lowered === "postgresql") {
+    return "postgresql";
+  }
+  if (lowered === "starrocks" || lowered === "mysql" || lowered === "singlestore") {
+    return "mysql";
+  }
+  return lowered;
+}
+
+function defaultDsnDatabase(sectionName) {
+  const lowered = sectionName.toLowerCase();
+  if (lowered === "postgres" || lowered === "postgresql") {
+    return "postgres";
+  }
+  if (lowered === "starrocks" || lowered === "mysql" || lowered === "singlestore") {
+    return "information_schema";
+  }
+  return "";
+}
+
 function readQualifiedName(buffer) {
   const partCount = readSizeTAt(buffer, 0);
   const formattedLength = readSizeTAt(buffer, QUALIFIED_NAME_FORMATTED_LEN_OFFSET);
@@ -813,6 +935,7 @@ class Cursor {
 }
 
 module.exports = {
+  buildDsn,
   COLUMN_TYPES,
   Connection,
   ConnectionManager,

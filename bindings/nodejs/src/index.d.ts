@@ -160,10 +160,12 @@ declare namespace aqDatabase {
     close(): Promise<void>;
   }
 
+  function buildDsn(sectionName: string, config: Record<string, string>, databaseOverride?: string): string;
   function resolveLibraryPath(explicitPath?: string | null): string;
 }
 
 declare const aqDatabase: {
+  buildDsn: typeof aqDatabase.buildDsn;
   COLUMN_TYPES: typeof aqDatabase.COLUMN_TYPES;
   Connection: typeof aqDatabase.Connection;
   ConnectionManager: typeof aqDatabase.ConnectionManager;
