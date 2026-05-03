@@ -87,6 +87,30 @@ The script defaults to `release` builds, strips the installed Unix binary (`SURR
 
 The vendored `surrealdb.c` dependency configuration is tuned for embedded/local use (`mem://` and `surrealkv://`) instead of remote HTTP/WebSocket connectivity.
 
+To compile remote client access into the vendored `surrealdb.c` library, set `SURREALDB_REMOTE_ACCESS=1` before running `scripts/build_surrealdb_c_vendor_lib.sh`. By default this enables both HTTP and WebSocket client protocols with Rustls:
+
+```bash
+SURREALDB_REMOTE_ACCESS=1 scripts/build_surrealdb_c_vendor_lib.sh
+```
+
+Optional knobs:
+
+- `SURREALDB_REMOTE_TRANSPORTS=http,ws` to choose `http`, `ws`, or both
+- `SURREALDB_REMOTE_TLS=rustls` or `SURREALDB_REMOTE_TLS=native-tls`
+- `SURREALDB_CARGO_FEATURES=feature1,feature2` to append extra crate features explicitly
+- `SURREALDB_RUSTUP_TOOLCHAIN=<toolchain>` to force a specific rustup toolchain for remote builds when the default `rustc` is too old
+
+Current SurrealDB 3.0.1 remote dependencies require `rustc >= 1.88`. If your shell resolves an older compiler, the build script now tries `rustup run stable cargo ...` first, then falls back to any installed rustup toolchain that satisfies that minimum.
+
+Example using only WebSocket with native TLS:
+
+```bash
+SURREALDB_REMOTE_ACCESS=1 \
+SURREALDB_REMOTE_TRANSPORTS=ws \
+SURREALDB_REMOTE_TLS=native-tls \
+scripts/build_surrealdb_c_vendor_lib.sh
+```
+
 Set `SURREALDB_CARGO_TARGET=<rust-target-triple>` to attempt a cross build for another target, for example `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, or `aarch64-unknown-linux-gnu`. Cross builds still depend on the corresponding Rust target, linker, SDK, and system libraries being available on the machine running the script.
 
 SurrealDB also maintains an official separate C SDK repository, `surrealdb/surrealdb.c`, which exposes `include/surrealdb.h` and declares Rust crate types `lib`, `staticlib`, and `cdylib`. That is the upstream C ABI path used here for Zig integration, and it is currently vendored as source plus current-host output rather than as prebuilt multi-platform binaries.
