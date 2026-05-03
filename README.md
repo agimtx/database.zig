@@ -83,6 +83,31 @@ Run `scripts/download_surrealdb_c_source.sh` to download the full official `surr
 
 Run `scripts/build_surrealdb_c_vendor_lib.sh` to build the vendored `surrealdb.c` SDK for the current host platform and install the shared library under `third_party/surrealdb/lib/<platform>/` as `libsurrealdb.dylib`, `libsurrealdb.so`, or `surrealdb.dll`, with the public header mirrored under `third_party/surrealdb/include/`.
 
+Common build flows from the repository root:
+
+Embedded or local-only build (`mem://`, `surrealkv://`):
+
+```bash
+scripts/download_surrealdb_c_source.sh
+scripts/build_surrealdb_c_vendor_lib.sh
+```
+
+Remote-enabled build with the repository's active Rust toolchain:
+
+```bash
+scripts/download_surrealdb_c_source.sh
+SURREALDB_REMOTE_ACCESS=1 scripts/build_surrealdb_c_vendor_lib.sh
+```
+
+Remote-enabled build when the default `rustc` is too old for SurrealDB remote dependencies:
+
+```bash
+scripts/download_surrealdb_c_source.sh
+SURREALDB_REMOTE_ACCESS=1 \
+SURREALDB_RUSTUP_TOOLCHAIN=1.91.0-aarch64-apple-darwin \
+scripts/build_surrealdb_c_vendor_lib.sh
+```
+
 The script defaults to `release` builds, strips the installed Unix binary (`SURREALDB_STRIP_BINARY=1`), and uses a size-first release profile (`opt-level=z`, `lto=fat`, `codegen-units=1`, `panic=abort`) to keep the vendored shared library small. Set `SURREALDB_C_PROFILE=debug` or `SURREALDB_STRIP_BINARY=0` if you need an unstripped debug build.
 
 The vendored `surrealdb.c` dependency configuration is tuned for embedded/local use (`mem://` and `surrealkv://`) instead of remote HTTP/WebSocket connectivity.
