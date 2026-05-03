@@ -79,6 +79,14 @@ pub fn valueString(value: *const c.sr_value_t) Error![]const u8 {
     return std.mem.span(value.*.unnamed_0.unnamed_2.sr_value_strand);
 }
 
+pub fn valueDateTime(value: *const c.sr_value_t) Error![]const u8 {
+    if (valueTag(value) != @as(@TypeOf(value.*.tag), c.SR_VALUE_DATETIME)) {
+        return error.UnexpectedValueType;
+    }
+
+    return std.mem.span(value.*.unnamed_0.unnamed_4.sr_value_datetime);
+}
+
 pub const ObjectBuilder = struct {
     inner: c.sr_object_t,
 
