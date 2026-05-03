@@ -75,6 +75,22 @@ Any other key-value pairs in the option string are forwarded to `AdbcDatabaseSet
 
 The vendored driver set in this workspace currently covers DuckDB, SQLite, PostgreSQL, Flight SQL, Snowflake, MySQL, BigQuery, SQL Server, Redshift, Trino, Databricks, ClickHouse, Exasol, and SingleStore.
 
+## SurrealDB C SDK
+
+SurrealDB is vendored separately from the ADBC path under `third_party/surrealdb/`, and this repository now keeps only the official `surrealdb/surrealdb.c` source snapshot plus the locally built current-platform shared library.
+
+Run `scripts/download_surrealdb_c_source.sh` to download the full official `surrealdb/surrealdb.c` source tree for the pinned upstream commit and vendor it directly under `third_party/surrealdb/tree/`, with the source archive under `third_party/surrealdb/source/`.
+
+Run `scripts/build_surrealdb_c_vendor_lib.sh` to build the vendored `surrealdb.c` SDK for the current host platform and install the shared library under `third_party/surrealdb/lib/<platform>/` as `libsurrealdb.dylib`, `libsurrealdb.so`, or `surrealdb.dll`, with the public header mirrored under `third_party/surrealdb/include/`.
+
+The script defaults to `release` builds, strips the installed Unix binary (`SURREALDB_STRIP_BINARY=1`), and uses a size-first release profile (`opt-level=z`, `lto=fat`, `codegen-units=1`, `panic=abort`) to keep the vendored shared library small. Set `SURREALDB_C_PROFILE=debug` or `SURREALDB_STRIP_BINARY=0` if you need an unstripped debug build.
+
+The vendored `surrealdb.c` dependency configuration is tuned for embedded/local use (`mem://` and `surrealkv://`) instead of remote HTTP/WebSocket connectivity.
+
+Set `SURREALDB_CARGO_TARGET=<rust-target-triple>` to attempt a cross build for another target, for example `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, or `aarch64-unknown-linux-gnu`. Cross builds still depend on the corresponding Rust target, linker, SDK, and system libraries being available on the machine running the script.
+
+SurrealDB also maintains an official separate C SDK repository, `surrealdb/surrealdb.c`, which exposes `include/surrealdb.h` and declares Rust crate types `lib`, `staticlib`, and `cdylib`. That is the upstream C ABI path used here for Zig integration, and it is currently vendored as source plus current-host output rather than as prebuilt multi-platform binaries.
+
 The platform matrix is not uniform. The upstream community ADBC registry currently publishes these community drivers for `macos_arm64`, `linux_amd64`, `linux_arm64`, and `windows_amd64`, but generally not for `macos_amd64`. In this repository, `macos-x86_64` now includes source-built Intel macOS dylibs for MySQL, BigQuery, Trino, Databricks, ClickHouse, Exasol, and SingleStore alongside the official Arrow/DuckDB artifacts. SQL Server and Redshift remain absent on `macos-x86_64` because the current community distributions do not publish Intel macOS artifacts and there is no public-source build path wired into this repository for them.
 
 ## MySQL
