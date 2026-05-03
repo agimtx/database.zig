@@ -190,10 +190,9 @@ def build_dsn(
     password: str | None = None,
     database: str | None = None,
     extra_options: Mapping[str, str] | None = None,
-    database_override: str | None = None,
 ) -> str:
     explicit_dsn = dsn
-    if explicit_dsn and database_override is None:
+    if explicit_dsn:
         return explicit_dsn
 
     resolved_extra_options = dict(extra_options or {})
@@ -211,7 +210,6 @@ def build_dsn(
             password=password,
             database=database,
             extra_options=resolved_extra_options,
-            database_override=database_override,
         )
 
     return _build_uri_dsn(
@@ -223,7 +221,6 @@ def build_dsn(
         password=password,
         database=database,
         extra_options=resolved_extra_options,
-        database_override=database_override,
     )
 
 
@@ -252,7 +249,6 @@ def _build_option_string_dsn(
     password: str | None,
     database: str | None,
     extra_options: Mapping[str, str],
-    database_override: str | None,
 ) -> str:
     parts: list[str] = []
     for key, value in (
@@ -282,7 +278,6 @@ def _build_option_string_dsn(
                 password=password,
                 database=database,
                 extra_options=extra_options,
-                database_override=database_override,
             )
         )
     else:
@@ -301,11 +296,10 @@ def _build_uri_dsn(
     password: str | None,
     database: str | None,
     extra_options: Mapping[str, str],
-    database_override: str | None,
 ) -> str:
     explicit_uri = uri
     if explicit_uri is not None:
-        return _override_uri_database(explicit_uri, database_override)
+        return explicit_uri
 
     if scheme is None:
         raise ValueError("scheme is required when dsn and uri are not provided")
@@ -315,7 +309,7 @@ def _build_uri_dsn(
     resolved_port = port
     username = user or ""
     resolved_password = password
-    resolved_database = database_override if database_override is not None else database
+    resolved_database = database
 
     credentials = ""
     if username:
@@ -353,20 +347,6 @@ def _build_uri_query_pairs(extra_options: Mapping[str, str]) -> list[tuple[str, 
 
 def _build_extra_option_pairs(extra_options: Mapping[str, str]) -> list[str]:
     return [f"{key}={value}" for key, value in sorted(extra_options.items())]
-
-
-def _override_uri_database(uri: str, database_override: str | None) -> str:
-    if database_override is None:
-        return uri
-
-    from urllib.parse import SplitResult, urlsplit, urlunsplit
-
-    parsed = urlsplit(uri)
-    if not parsed.scheme:
-        return uri
-
-    path = f"/{quote(database_override, safe='')}" if database_override else ""
-    return urlunsplit(SplitResult(parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
 def _format_qualified_name_parts(parts: tuple[QualifiedNamePart, ...] | list[QualifiedNamePart]) -> str:

@@ -52,13 +52,13 @@ class TestTarget:
     section: str
     config: dict[str, str]
 
-    def dsn(self, database_override: str | None = None) -> str:
+    def dsn(self) -> str:
         scheme = self.config.get("scheme")
         database = self.config.get("database")
         if _should_apply_section_defaults(self.config):
             if scheme is None:
                 scheme = _default_scheme(self.section)
-            if database is None and database_override is None:
+            if database is None:
                 database = _default_database(self.section)
 
         extra_options = {
@@ -77,7 +77,6 @@ class TestTarget:
             password=self.config.get("password"),
             database=database,
             extra_options=extra_options or None,
-            database_override=database_override,
         )
 
 
