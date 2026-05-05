@@ -75,6 +75,164 @@ Any other key-value pairs in the option string are forwarded to `AdbcDatabaseSet
 
 The vendored driver set in this workspace currently covers DuckDB, SQLite, PostgreSQL, Flight SQL, Snowflake, MySQL, BigQuery, SQL Server, Redshift, Trino, Databricks, ClickHouse, Exasol, and SingleStore.
 
+## Vendored Shared Libraries
+
+All `adbc` connections depend on the ADBC driver manager plus one database-specific native library from `third_party/adbc/1.11.0/lib/<platform>/`.
+
+Common ADBC dependency:
+
+| Purpose | `.dylib` | `.so` | `.dll` |
+| --- | --- | --- | --- |
+| Driver manager | `libadbc_driver_manager.dylib` | `libadbc_driver_manager.so` | `adbc_driver_manager.dll` |
+
+Database-specific native libraries:
+
+| Database | `.dylib` | `.so` | `.dll` |
+| --- | --- | --- | --- |
+| DuckDB | `libduckdb.dylib` | `libduckdb.so` | `duckdb.dll` |
+| SQLite | `libadbc_driver_sqlite.dylib` | `libadbc_driver_sqlite.so` | `adbc_driver_sqlite.dll` |
+| PostgreSQL | `libadbc_driver_postgresql.dylib` | `libadbc_driver_postgresql.so` | `adbc_driver_postgresql.dll` |
+| Flight SQL | `libadbc_driver_flightsql.dylib` | `libadbc_driver_flightsql.so` | `adbc_driver_flightsql.dll` |
+| Snowflake | `libadbc_driver_snowflake.dylib` | `libadbc_driver_snowflake.so` | `adbc_driver_snowflake.dll` |
+| MySQL | `libadbc_driver_mysql.dylib` | `libadbc_driver_mysql.so` | `adbc_driver_mysql.dll` |
+| BigQuery | `libadbc_driver_bigquery.dylib` | `libadbc_driver_bigquery.so` | `libadbc_driver_bigquery.dll` |
+| SQL Server | `libadbc_driver_mssql.dylib` | `libadbc_driver_mssql.so` | `libadbc_driver_mssql.dll` |
+| Redshift | `libadbc_driver_redshift.dylib` | `libadbc_driver_redshift.so` | `libadbc_driver_redshift.dll` |
+| Trino | `libadbc_driver_trino.dylib` | `libadbc_driver_trino.so` | `libadbc_driver_trino.dll` |
+| Databricks | `libadbc_driver_databricks.dylib` | `libadbc_driver_databricks.so` | `libadbc_driver_databricks.dll` |
+| ClickHouse | `libadbc_driver_clickhouse.dylib` | `libadbc_driver_clickhouse.so` | `libadbc_driver_clickhouse.dll` |
+| Exasol | `libadbc_driver_exasol.dylib` | `libadbc_driver_exasol.so` | `libadbc_driver_exasol.dll` |
+| SingleStore | `libadbc_driver_singlestore.dylib` | `libadbc_driver_singlestore.so` | `libadbc_driver_singlestore.dll` |
+
+Notes:
+
+- DuckDB uses DuckDB's own `libduckdb` native library instead of an Apache `libadbc_driver_*` driver package.
+- On Windows, official Arrow ADBC packages use `adbc_driver_*.dll`, while several community drivers are currently vendored under `libadbc_driver_*.dll`. MySQL currently ships under both names.
+- `macos-x86_64` currently includes the official `driver_manager`, `sqlite`, `postgresql`, `flightsql`, `snowflake`, and `duckdb` artifacts plus source-built Intel macOS dylibs for `mysql`, `bigquery`, `databricks`, `clickhouse`, `exasol`, and `singlestore`.
+- `mssql`, `redshift`, and `trino` are currently absent on `macos-x86_64`.
+
+## Per-Database Vendored Runtime Dependencies
+
+The table above lists the primary database driver libraries. The lists below show the vendored non-system dynamic-library dependency closure for each database on each platform in this workspace.
+
+### DuckDB
+
+- `macos-arm64`: `libduckdb.dylib`, `libadbc_driver_manager.dylib`, `libicudata.75.dylib`, `libicui18n.75.dylib`, `libicuuc.75.dylib`
+- `macos-x86_64`: `libduckdb.dylib`, `libadbc_driver_manager.dylib`, `libicudata.75.dylib`, `libicui18n.75.dylib`, `libicuuc.75.dylib`
+- `linux-arm64`: `libduckdb.so`, `libadbc_driver_manager.so`, `libicudata.so.75`, `libicui18n.so.75`, `libicuuc.so.75`
+- `linux-x86_64`: `libduckdb.so`, `libadbc_driver_manager.so`, `libicudata.so.75`, `libicui18n.so.75`, `libicuuc.so.75`
+- `windows-x86_64`: `duckdb.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### SQLite
+
+- `macos-arm64`: `libadbc_driver_sqlite.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_sqlite.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_sqlite.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_sqlite.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `adbc_driver_sqlite.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `sqlite3.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### PostgreSQL
+
+- `macos-arm64`: `libadbc_driver_postgresql.dylib`, `libadbc_driver_manager.dylib`, `libcom_err.3.0.dylib`, `libcrypto.3.dylib`, `libgssapi_krb5.2.2.dylib`, `libk5crypto.3.1.dylib`, `libkrb5.3.3.dylib`, `libkrb5support.1.1.dylib`, `liblber.2.dylib`, `libldap.2.dylib`, `libpq.5.dylib`, `libsasl2.dylib`, `libssl.3.dylib`
+- `macos-x86_64`: `libadbc_driver_postgresql.dylib`, `libadbc_driver_manager.dylib`, `libcom_err.3.0.dylib`, `libcrypto.3.dylib`, `libgssapi_krb5.2.2.dylib`, `libk5crypto.3.1.dylib`, `libkrb5.3.3.dylib`, `libkrb5support.1.1.dylib`, `liblber.2.dylib`, `libldap.2.dylib`, `libpq.5.dylib`, `libsasl2.dylib`, `libssl.3.dylib`
+- `linux-arm64`: `libadbc_driver_postgresql.so`, `libadbc_driver_manager.so`, `libcom_err.so.3`, `libcrypto.so.3`, `libgssapi_krb5.so.2`, `libk5crypto.so.3`, `libkrb5.so.3`, `libkrb5support.so.0`, `liblber.so.2`, `libldap.so.2`, `libpq.so.5`, `libsasl2.so.3`, `libssl.so.3`
+- `linux-x86_64`: `libadbc_driver_postgresql.so`, `libadbc_driver_manager.so`, `libcom_err.so.3`, `libcrypto.so.3`, `libgssapi_krb5.so.2`, `libk5crypto.so.3`, `libkrb5.so.3`, `libkrb5support.so.0`, `liblber.so.2`, `libldap.so.2`, `libpq.so.5`, `libsasl2.so.3`, `libssl.so.3`
+- `windows-x86_64`: `adbc_driver_postgresql.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `comerr64.dll`, `gssapi64.dll`, `k5sprt64.dll`, `krb5_64.dll`, `libcrypto-3-x64.dll`, `libpq.dll`, `libssl-3-x64.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### Flight SQL
+
+- `macos-arm64`: `libadbc_driver_flightsql.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_flightsql.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_flightsql.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_flightsql.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `adbc_driver_flightsql.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### Snowflake
+
+- `macos-arm64`: `libadbc_driver_snowflake.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_snowflake.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_snowflake.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_snowflake.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `adbc_driver_snowflake.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### MySQL
+
+- `macos-arm64`: `libadbc_driver_mysql.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_mysql.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_mysql.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_mysql.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `adbc_driver_mysql.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### BigQuery
+
+- `macos-arm64`: `libadbc_driver_bigquery.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_bigquery.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_bigquery.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_bigquery.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_bigquery.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### SQL Server
+
+- `macos-arm64`: `libadbc_driver_mssql.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: not vendored in this workspace
+- `linux-arm64`: `libadbc_driver_mssql.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_mssql.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_mssql.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### Redshift
+
+- `macos-arm64`: `libadbc_driver_redshift.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: not vendored in this workspace
+- `linux-arm64`: `libadbc_driver_redshift.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_redshift.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_redshift.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### Trino
+
+- `macos-arm64`: `libadbc_driver_trino.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: not vendored in this workspace
+- `linux-arm64`: `libadbc_driver_trino.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_trino.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_trino.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### Databricks
+
+- `macos-arm64`: `libadbc_driver_databricks.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_databricks.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_databricks.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_databricks.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_databricks.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### ClickHouse
+
+- `macos-arm64`: `libadbc_driver_clickhouse.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_clickhouse.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_clickhouse.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_clickhouse.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_clickhouse.dll`, `adbc_driver_manager.dll`, `api-ms-win-core-synch-l1-2-0.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### Exasol
+
+- `macos-arm64`: `libadbc_driver_exasol.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_exasol.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_exasol.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_exasol.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_exasol.dll`, `adbc_driver_manager.dll`, `api-ms-win-core-synch-l1-2-0.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+### SingleStore
+
+- `macos-arm64`: `libadbc_driver_singlestore.dylib`, `libadbc_driver_manager.dylib`
+- `macos-x86_64`: `libadbc_driver_singlestore.dylib`, `libadbc_driver_manager.dylib`
+- `linux-arm64`: `libadbc_driver_singlestore.so`, `libadbc_driver_manager.so`
+- `linux-x86_64`: `libadbc_driver_singlestore.so`, `libadbc_driver_manager.so`
+- `windows-x86_64`: `libadbc_driver_singlestore.dll`, `adbc_driver_manager.dll`, `api-ms-win-crt-convert-l1-1-0.dll`, `api-ms-win-crt-environment-l1-1-0.dll`, `api-ms-win-crt-filesystem-l1-1-0.dll`, `api-ms-win-crt-heap-l1-1-0.dll`, `api-ms-win-crt-locale-l1-1-0.dll`, `api-ms-win-crt-math-l1-1-0.dll`, `api-ms-win-crt-private-l1-1-0.dll`, `api-ms-win-crt-runtime-l1-1-0.dll`, `api-ms-win-crt-stdio-l1-1-0.dll`, `api-ms-win-crt-string-l1-1-0.dll`, `api-ms-win-crt-time-l1-1-0.dll`, `api-ms-win-crt-utility-l1-1-0.dll`, `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`
+
+SurrealDB is vendored separately from the ADBC path and uses its own shared-library naming under `third_party/surrealdb/lib/<platform>/`:
+
+| Database | `.dylib` | `.so` | `.dll` |
+| --- | --- | --- | --- |
+| SurrealDB | `libsurrealdb.dylib` | `libsurrealdb.so` | `surrealdb.dll` |
+
 ## SurrealDB C SDK
 
 SurrealDB is vendored separately from the ADBC path under `third_party/surrealdb/`, and this repository now keeps only the official `surrealdb/surrealdb.c` source snapshot plus the locally built current-platform shared library.
@@ -140,13 +298,13 @@ Set `SURREALDB_CARGO_TARGET=<rust-target-triple>` to attempt a cross build for a
 
 SurrealDB also maintains an official separate C SDK repository, `surrealdb/surrealdb.c`, which exposes `include/surrealdb.h` and declares Rust crate types `lib`, `staticlib`, and `cdylib`. That is the upstream C ABI path used here for Zig integration, and it is currently vendored as source plus current-host output rather than as prebuilt multi-platform binaries.
 
-The platform matrix is not uniform. The upstream community ADBC registry currently publishes these community drivers for `macos_arm64`, `linux_amd64`, `linux_arm64`, and `windows_amd64`, but generally not for `macos_amd64`. In this repository, `macos-x86_64` now includes source-built Intel macOS dylibs for MySQL, BigQuery, Trino, Databricks, ClickHouse, Exasol, and SingleStore alongside the official Arrow/DuckDB artifacts. SQL Server and Redshift remain absent on `macos-x86_64` because the current community distributions do not publish Intel macOS artifacts and there is no public-source build path wired into this repository for them.
+The platform matrix is not uniform. The upstream community ADBC registry currently publishes these community drivers for `macos_arm64`, `linux_amd64`, `linux_arm64`, and `windows_amd64`, but generally not for `macos_amd64`. In this repository, `macos-x86_64` now includes source-built Intel macOS dylibs for MySQL, BigQuery, Databricks, ClickHouse, Exasol, and SingleStore alongside the official Arrow/DuckDB artifacts. SQL Server, Redshift, and Trino remain absent on `macos-x86_64` because the current community distributions do not publish Intel macOS artifacts and there is no public-source build path wired into this repository for them.
 
 ## MySQL
 
 This repository now has the control-plane support needed to open an ADBC connection through a MySQL-compatible shared library. The workspace currently vendors a community MySQL ADBC driver under `third_party/adbc/1.11.0/lib/<platform>/`, so `mysql://...` now resolves automatically on the vendored macOS, Linux, and Windows targets shipped in this repository.
 
-On `macos-x86_64`, this repository vendors a separately built Intel macOS MySQL dylib together with source-built Intel macOS dylibs for BigQuery, Trino, Databricks, ClickHouse, Exasol, and SingleStore.
+On `macos-x86_64`, this repository vendors a separately built Intel macOS MySQL dylib together with source-built Intel macOS dylibs for BigQuery, Databricks, ClickHouse, Exasol, and SingleStore.
 
 On platforms where the repository does not have a vendored MySQL shared library yet, keep using an explicit native path such as `driver=/absolute/path/to/libadbc_driver_mysql.dylib;uri=mysql://...`.
 
